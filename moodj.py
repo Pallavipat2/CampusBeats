@@ -1,3 +1,13 @@
+#content in here
+#login
+#signup
+#session state
+#main menu
+#database connection
+#API connection
+#password hashing
+
+
 import mysql.connector
 from spotipy.oauth2 import SpotifyClientCredentials
 import spotipy
@@ -8,6 +18,7 @@ import matplotlib.pyplot as plt
 from dotenv import load_dotenv
 import os
 import bcrypt
+import social
 
 # ================= LOAD ENV =================
 load_dotenv()
@@ -69,7 +80,7 @@ sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
 if not st.session_state["logged_in"]:
     menu = st.sidebar.selectbox("Menu", ["Login", "Signup"])
 else:
-    menu = st.sidebar.selectbox("Menu", ["Mood Logger", "Dashboard", "Logout"])
+    menu = st.sidebar.selectbox("Menu", ["Mood Logger", "Dashboard","Feed", "Logout","Discover People"])
 
 
 # =====================================================
@@ -136,9 +147,10 @@ elif menu == "Mood Logger":
             results = sp.search(q=query, type="track", limit=5)
             st.session_state["tracks"] = results['tracks']['items']
 
-    tracks = st.session_state["tracks"]
+    tracks = st.session_state.get("tracks", [])
 
     if tracks:
+
         song_options = [
             f"{track['name']} - {track['artists'][0]['name']}"
             for track in tracks
@@ -155,58 +167,84 @@ elif menu == "Mood Logger":
         artist_id = track['artists'][0]['id']
 
         artist_info = sp.artist(artist_id)
-        genres = artist_info.get('genres',[])
+        genres = artist_info.get('genres', [])
         genre_category = classify_genre(genres)
 
         embed_url = f"https://open.spotify.com/embed/track/{spotify_track_id}"
 
         st.write("Selected:", song_name, "-", artist_name)
         st.write("Album:", album_name)
+
         components.iframe(embed_url, height=80)
 
         if track['album']['images']:
             st.image(track['album']['images'][0]['url'], width=200)
 
-        mood = st.selectbox("Choose your mood",
-                            ["Happy", "Sad", "Calm", "Anxious", "Excited"])
+        mood = st.selectbox(
+            "Choose your mood",
+            [
+                "Happy","Sad","Stressed","Excited","Overthinking","Content",
+                "Calm","Hopeful","Proud","Grateful","Inspired","Lonely",
+                "Tired","Disappointed","Anxious","Overwhelmed","Motivated",
+                "Hopeless","Enraged","Lost","Nostalgic"
+            ]
+        )
+
         journal = st.text_area("Journal")
 
-        if st.button("Save Entry"):
+        visibility = st.selectbox(
+            "Who can see this post?",
+            ["private", "followers", "public"]
+        )
+
+        if st.button("Post Entry"):
 
             user_id = st.session_state["user_id"]
 
-            # Insert song
+            # Insert song if not already stored
             cursor.execute("""
                 INSERT IGNORE INTO songs
                 (spotify_track_id, song_name, artist_name, album_name, genre)
                 VALUES (%s, %s, %s, %s, %s)
-            """, (spotify_track_id, song_name,
-                  artist_name, album_name, genre_category))
+            """, (
+                spotify_track_id,
+                song_name,
+                artist_name,
+                album_name,
+                genre_category
+            ))
             conn.commit()
 
-            # Get song ID
+            # Retrieve song ID
             cursor.execute("""
                 SELECT id FROM songs
                 WHERE spotify_track_id=%s
             """, (spotify_track_id,))
+
             result = cursor.fetchone()
 
-            if not result:
-                st.error("Song not found")
+            if result is None:
+                st.error("Song could not be saved.")
                 st.stop()
 
-            song_id = result['id']
+            song_id = result["id"]
 
-            # Insert mood entry
+            # Insert post
             cursor.execute("""
-                INSERT INTO mood_entries
-                (user_id, song_id, mood, journal)
-                VALUES (%s, %s, %s, %s)
-            """, (user_id, song_id, mood, journal))
+                INSERT INTO posts
+                (user_id, song_id, mood, journal_text, visibility)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (
+                user_id,
+                song_id,
+                mood,
+                journal,
+                visibility
+            ))
+
             conn.commit()
 
-            st.success("Entry saved successfully!")
-
+            st.success("Post created successfully!")
 
 # =====================================================
 # ===================== DASHBOARD ======================
@@ -219,7 +257,7 @@ elif menu == "Dashboard":
 
     cursor.execute("""
         SELECT mood, COUNT(*) as total
-        FROM mood_entries
+        FROM posts
         WHERE user_id=%s
         GROUP BY mood
     """, (user_id,))
@@ -234,14 +272,14 @@ elif menu == "Dashboard":
 
         cursor.execute("""
             SELECT COUNT(*) as total
-            FROM mood_entries
+            FROM posts
             WHERE user_id=%s
         """, (user_id,))
         total_songs = cursor.fetchone()['total']
 
         cursor.execute("""
             SELECT mood, COUNT(*) as total
-            FROM mood_entries
+            FROM posts
             WHERE user_id=%s
             GROUP BY mood
             ORDER BY total DESC
@@ -271,7 +309,6 @@ elif menu == "Dashboard":
     else:
         st.info("No mood entries yet.")
 
-
 # =====================================================
 # ======================= LOGOUT =======================
 # =====================================================
@@ -283,8 +320,26 @@ elif menu == "Logout":
 
     st.success("Logged out successfully!")
     st.rerun()
+    
+    
+# =====================================================
+# ======================= FEED ========================
+# =====================================================
+elif menu == "Feed":
+    if "user_id" not in st.session_state:
+        st.error("You must log in first")
+        st.stop()
 
-
+    current_user = st.session_state["user_id"]
+    social.show_feed(cursor, current_user)
+    
+    
+# =====================================================
+# =======================Discover people ================
+# =====================================================
+if menu=="Discover People":
+    social.discover_users(cursor, conn)
+    
 # ================= CLOSE CONNECTION =================
 cursor.close()
 conn.close()
