@@ -326,12 +326,14 @@ elif menu == "Logout":
 # ======================= FEED ========================
 # =====================================================
 elif menu == "Feed":
+
     if "user_id" not in st.session_state:
         st.error("You must log in first")
         st.stop()
 
     current_user = st.session_state["user_id"]
-    social.show_feed(cursor, current_user)
+
+    social.show_feed(cursor, conn, current_user)
     
     
 # =====================================================
