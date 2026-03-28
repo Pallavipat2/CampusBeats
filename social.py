@@ -1,27 +1,125 @@
-#create post
-#feed display
-#likes
-#comments
+# ================= IMPORTS =================
 import streamlit as st
+import os
+import uuid
+
+# ================= CONSTANTS =================
+DEFAULT_PROFILE_PIC = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
+UPLOAD_FOLDER = "uploads/videos"
 
 
 # =====================================================
-# =======================FEED =======================
+# ================= VIDEO UPLOAD ======================
+# =====================================================
+def show_video_upload(cursor, conn, current_user):
+    st.subheader("📹 Upload Music Video")
+
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+    caption = st.text_area("Caption", key="video_caption")
+
+    mood = st.selectbox(
+        "Choose your mood",
+        ["Happy","Sad","Stressed","Excited","Overthinking","Content",
+         "Calm","Hopeful","Proud","Grateful","Inspired","Lonely",
+         "Tired","Disappointed","Anxious","Overwhelmed","Motivated",
+         "Hopeless","Enraged","Lost","Nostalgic"]
+    )
+
+    visibility = st.selectbox(
+        "Visibility",
+        ["public", "followers", "private"],
+        key="video_visibility"
+    )
+
+    uploaded_video = st.file_uploader(
+        "Upload a music video",
+        type=["mp4", "mov", "avi", "mkv"],
+        key="video_uploader"
+    )
+
+    if st.button("Post Video"):
+        if uploaded_video is None:
+            st.error("Please upload a video")
+            return
+
+        file_ext = uploaded_video.name.split(".")[-1]
+        filename = f"{uuid.uuid4()}.{file_ext}"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+
+        try:
+            with open(file_path, "wb") as f:
+                f.write(uploaded_video.read())
+
+            cursor.execute("""
+                INSERT INTO posts (user_id, song_id, mood, journal_text, visibility, video_path)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                current_user,
+                None,
+                mood,
+                caption,
+                visibility,
+                file_path
+            ))
+
+            conn.commit()
+            st.success("Video uploaded successfully!")
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"Upload failed: {e}")
+
+
+# =====================================================
+# ======================= FEED =========================
 # =====================================================
 def show_feed(cursor, conn, current_user):
+    import streamlit as st
+    import os
 
+    DEFAULT_PROFILE_PIC = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
+
+    # 🔥 GLOBAL CSS (safe targeting)
+    st.markdown("""
+    <style>
+
+    .post-card {
+        border-radius: 18px;
+        padding: 18px;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+    }
+
+    .admin-post {
+        background: linear-gradient(190deg, #FFE082, #FFC107);
+        border: 2px solid #DAA520;
+    }
+
+    .announcement-post {
+        background: linear-gradient(135deg, #CAD7A5, #6BB5A6);
+        border: 2px solid #617F6A;
+        box-shadow: 0 8px 25px rgba(207, 229, 213,0.4);
+    }
+
+    .normal-post {
+        background: #ffffff;
+        border: 1px solid #ddd;
+    }
+
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ================= DB =================
     cursor.execute("""
         SELECT 
             posts.*,
             users.username,
-            songs.song_name,
-            songs.artist_name,
-            songs.album_name,
-            songs.spotify_track_id,
+            users.profile_pic,
+            users.role,
             COUNT(likes.id) AS like_count
         FROM posts
         JOIN users ON posts.user_id = users.id
-        LEFT JOIN songs ON posts.song_id = songs.id
         LEFT JOIN likes ON posts.id = likes.post_id
         WHERE
             posts.user_id = %s
@@ -29,13 +127,17 @@ def show_feed(cursor, conn, current_user):
             OR (
                 posts.visibility = 'followers'
                 AND posts.user_id IN (
-                    SELECT following_id
-                    FROM follows
-                    WHERE follower_id = %s
+                    SELECT following_id FROM follows WHERE follower_id = %s
                 )
             )
         GROUP BY posts.id
-        ORDER BY posts.created_at DESC
+        ORDER BY
+            CASE
+                WHEN users.role = 'admin' AND posts.post_type = 'announcement' THEN 0
+                WHEN users.role = 'admin' THEN 1
+                ELSE 2
+            END,
+            posts.created_at DESC
     """, (current_user, current_user))
 
     posts = cursor.fetchall()
@@ -44,161 +146,128 @@ def show_feed(cursor, conn, current_user):
         st.info("No posts yet.")
         return
 
+    # ================= FEED =================
     for post in posts:
 
+        role = post.get("role", "student")
+        post_type = post.get("post_type", "music")
         post_id = post["id"]
 
-        st.subheader(post["username"])
+        # 🎯 CLASS DECIDER
+        if role == "admin" and post_type == "announcement":
+            css_class = "post-card announcement-post"
+        elif role == "admin":
+            css_class = "post-card admin-post"
+        else:
+            css_class = "post-card normal-post"
 
-        if post["song_name"]:
-            st.write("🎵 Song:", post["song_name"], "-", post["artist_name"])
+        # 🔥 THIS is the trick: render EVERYTHING inside one markdown block
+        content = f"""
+        <div class="{css_class}">
+            <b>{post['username']}</b>
+            <br>
+            <small>{post['created_at']}</small>
+            <br><br>
+            {post.get('caption', '')}
+        </div>
+        """
 
-            spotify_url = f"https://open.spotify.com/embed/track/{post['spotify_track_id']}"
+        st.markdown(content, unsafe_allow_html=True)
 
-            st.components.v1.iframe(
-                spotify_url,
-                height=80
-            )
+        # 👇 STREAMLIT ELEMENTS (kept after but visually grouped)
+        if post.get("video_path") and os.path.exists(post["video_path"]):
+            st.video(post["video_path"])
 
-        st.write("Mood:", post["mood"])
-        st.write(post["journal_text"])
-        st.caption(post["created_at"])
+        # LIKE
+        cursor.execute("SELECT id FROM likes WHERE user_id=%s AND post_id=%s",
+                       (current_user, post_id))
+        liked = cursor.fetchone()
 
-        col1, col2 = st.columns(2)
-
-        # ❤️ LIKE BUTTON
-        with col1:
-
-            cursor.execute("""
-                SELECT id FROM likes
-                WHERE user_id=%s AND post_id=%s
-            """, (current_user, post_id))
-
-            liked = cursor.fetchone()
-
-            if liked:
-                if st.button(f"💔 Unlike ({post['like_count']})", key=f"unlike_{post_id}"):
-
-                    cursor.execute("""
-                        DELETE FROM likes
-                        WHERE user_id=%s AND post_id=%s
-                    """, (current_user, post_id))
-
-                    conn.commit()
-                    st.rerun()
-
-            else:
-                if st.button(f"❤️ Like ({post['like_count']})", key=f"like_{post_id}"):
-
-                    cursor.execute("""
-                        INSERT INTO likes (user_id, post_id)
-                        VALUES (%s,%s)
-                    """, (current_user, post_id))
-
-                    conn.commit()
-                    st.rerun()
-
-
-        # 💬 COMMENTS
-        with col2:
-            st.write("💬 Comments")
-
-            cursor.execute("""
-                SELECT comments.comment_text, users.username
-                FROM comments
-                JOIN users ON comments.user_id = users.id
-                WHERE comments.post_id=%s
-                ORDER BY comments.created_at DESC
-            """, (post_id,))
-
-            comments = cursor.fetchall()
-
-            for comment in comments:
-                st.write(f"**{comment['username']}**: {comment['comment_text']}")
-
-            new_comment = st.text_input(
-                "Write a comment",
-                key=f"comment_input_{post_id}"
-            )
-
-            if st.button("Post", key=f"comment_btn_{post_id}"):
-
-                if new_comment.strip():
-
-                    cursor.execute("""
-                        INSERT INTO comments (user_id, post_id, comment_text)
-                        VALUES (%s,%s,%s)
-                    """, (current_user, post_id, new_comment))
-
-                    conn.commit()
-                    st.rerun()
+        if liked:
+            if st.button(f"💔 Unlike {post['like_count']}", key=f"u_{post_id}"):
+                cursor.execute("DELETE FROM likes WHERE user_id=%s AND post_id=%s",
+                               (current_user, post_id))
+                conn.commit()
+                st.rerun()
+        else:
+            if st.button(f"❤️ Like {post['like_count']}", key=f"l_{post_id}"):
+                cursor.execute("INSERT INTO likes (user_id, post_id) VALUES (%s,%s)",
+                               (current_user, post_id))
+                conn.commit()
+                st.rerun()
 
         st.divider()
 
-
 # =====================================================
-# ====================Follow user =====================
+# ================= FOLLOW SYSTEM ======================
 # =====================================================
-def follow_user(cursor, connection, current_user, target_user):
-
+def follow_user(cursor, conn, current_user, target_user):
     cursor.execute("""
         INSERT INTO follows (follower_id, following_id)
         VALUES (%s, %s)
     """, (current_user, target_user))
+    conn.commit()
+    st.success("Followed!")
 
-    connection.commit()
 
-    st.success("You are now following this user")
-    
-    
-# =====================================================
-# ====================Unfollow user =====================       
-# =====================================================
-def unfollow_user(cursor, connection, current_user, target_user):
-
+def unfollow_user(cursor, conn, current_user, target_user):
     cursor.execute("""
         DELETE FROM follows
         WHERE follower_id=%s AND following_id=%s
     """, (current_user, target_user))
+    conn.commit()
+    st.success("Unfollowed!")
 
-    connection.commit()
 
-    st.success("You have unfollowed this user")
-    
-    
 # =====================================================
-# ==================Discovering users =================
+# ================= DISCOVER USERS =====================
 # =====================================================
 def discover_users(cursor, conn):
-
-    st.title("Discover People")
+    st.title("🔍 Discover People")
 
     current_user = st.session_state["user_id"]
+    search = st.text_input("Search users")
 
-    cursor.execute("SELECT id, username FROM users")
+    if search:
+        cursor.execute("""
+            SELECT id, username, bio, profile_pic
+            FROM users
+            WHERE username LIKE %s
+        """, (f"%{search}%",))
+    else:
+        cursor.execute("SELECT id, username, bio, profile_pic FROM users")
+
     users = cursor.fetchall()
 
     for user in users:
+        if user["id"] == current_user:
+            continue
 
-        if user["id"] != current_user:
+        cursor.execute("""
+            SELECT * FROM follows
+            WHERE follower_id=%s AND following_id=%s
+        """, (current_user, user["id"]))
 
-            st.write(user["username"])
+        following = cursor.fetchone()
 
-            # Check if already following
-            cursor.execute("""
-                SELECT * FROM follows
-                WHERE follower_id=%s AND following_id=%s
-            """, (current_user, user["id"]))
+        col1, col2, col3 = st.columns([1, 5, 2])
 
-            already_following = cursor.fetchone()
+        with col1:
+            st.image(user["profile_pic"] or DEFAULT_PROFILE_PIC, width=50)
 
-            if already_following:
+        with col2:
+            st.write(f"**{user['username']}**")
+            if user["bio"]:
+                st.caption(user["bio"])
 
-                if st.button(f"Unfollow {user['username']}", key=f"u{user['id']}"):
+        with col3:
+            if following:
+                if st.button("Unfollow", key=f"u{user['id']}"):
                     unfollow_user(cursor, conn, current_user, user["id"])
-
+                    st.rerun()
             else:
-
-                if st.button(f"Follow {user['username']}", key=f"f{user['id']}"):
+                if st.button("Follow", key=f"f{user['id']}"):
                     follow_user(cursor, conn, current_user, user["id"])
- 
+                    st.rerun()
+
+        st.divider()

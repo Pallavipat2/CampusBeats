@@ -2,3 +2,8 @@
 .env
 __pycache__
 *.pyc
+.cache
+appp.py
+banner.png
+profile_pics
+uploads
