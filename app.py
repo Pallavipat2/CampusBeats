@@ -32,6 +32,71 @@ cursor = conn.cursor(dictionary=True)
 # ================= CSS =================
 st.markdown("""
 <style>
+:root {
+    --cb-primary: #6bb5a6;
+    --cb-secondary: #9bc870;
+    --cb-accent: #cad7a5;
+    --cb-surface: #c8e4d6;
+    --cb-sky: #94cdd8;
+    --cb-text: #18443d;
+}
+
+.stApp {
+    background:
+        radial-gradient(circle at 15% 20%, rgba(148, 205, 216, 0.32), transparent 28%),
+        radial-gradient(circle at 85% 12%, rgba(155, 200, 112, 0.28), transparent 30%),
+        linear-gradient(120deg, #f7fffb 0%, #eff8f4 100%);
+    color: var(--cb-text);
+}
+
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #c8e4d6 0%, #94cdd8 100%);
+}
+
+@keyframes cb-fade-up {
+    from { opacity: 0; transform: translateY(14px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cb-soft-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(107, 181, 166, 0.35); }
+    70% { box-shadow: 0 0 0 14px rgba(107, 181, 166, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(107, 181, 166, 0); }
+}
+
+h1, h2, h3 {
+    color: var(--cb-text);
+    animation: cb-fade-up 0.5s ease both;
+}
+
+.stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] > div {
+    border: 1px solid rgba(107, 181, 166, 0.45) !important;
+    border-radius: 12px !important;
+}
+
+.stButton > button {
+    border: none !important;
+    border-radius: 12px !important;
+    background: linear-gradient(135deg, var(--cb-primary), var(--cb-secondary)) !important;
+    color: #ffffff !important;
+    font-weight: 600 !important;
+    transition: transform 0.22s ease, filter 0.22s ease !important;
+    animation: cb-soft-pulse 2.8s infinite;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px) scale(1.01);
+    filter: brightness(1.07);
+}
+
+.cb-hero {
+    background: linear-gradient(130deg, rgba(107, 181, 166, 0.14), rgba(200, 228, 214, 0.42));
+    border: 1px solid rgba(107, 181, 166, 0.3);
+    border-radius: 20px;
+    padding: 1.1rem 1.2rem;
+    margin-bottom: 1rem;
+    animation: cb-fade-up 0.6s ease both;
+}
 img {
     border-radius: 50%;
     object-fit: cover;
@@ -92,7 +157,13 @@ sp = spotipy.Spotify(
 
 # ================= LANDING PAGE =================
 def show_landing_page():
-  
+    st.markdown("""
+    <div class="cb-hero">
+      <h2 style="margin:0;">Campus Beats</h2>
+      <p style="margin:.35rem 0 0 0;">Find your vibe, track your mood, and share your campus soundtrack.</p>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.image("banner.png", use_container_width=True)
 
     col1, col2, col3 = st.columns([1,2,1])
@@ -142,13 +213,13 @@ else:
     if role == "admin":
         menu = st.sidebar.selectbox(
             "Menu",
-            ["Admin Dashboard", "Mood Logger", "Profile", "Feed", "Discover People", "Logout"]
+              ["Admin Dashboard", "Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People", "Logout"]
         )
         st.sidebar.success(f"Admin: {st.session_state['username']}")
     else:
         menu = st.sidebar.selectbox(
             "Menu",
-            ["Mood Logger", "Profile", "Feed", "Discover People", "Logout"]
+              ["Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People", "Logout"]
         )
         st.sidebar.success(st.session_state["username"])
 
@@ -158,6 +229,9 @@ else:
 
     elif menu == "Mood Logger":
         show_mood_logger(cursor, conn, sp)
+
+    elif menu == "My Mood Posts":
+        social.show_my_mood_posts(cursor, conn, st.session_state["user_id"])
 
     elif menu == "Profile":
         show_profile_page(cursor, conn)

@@ -93,17 +93,20 @@ This code expires in 10 minutes.
 # ---------------- SESSION DEFAULTS ----------------
 
 def init_auth_session():
-    import streamlit as st
 
     defaults = {
         "signup_otp_sent": False,
         "signup_pending": None,
         "reset_otp_sent": False,
         "reset_pending_email": None,
+         "reset_otp": None,
+        "reset_otp_expiry": None,
+        "reset_stage": "email",
+        "reset_last_sent_email": None,
         "logged_in": False,
         "user_id": None,
         "username": None,
-        "role": None
+        "role": None,
     }
 
     for key, value in defaults.items():
@@ -155,7 +158,7 @@ def signup_page():
                             "email": email,
                             "password": password,
                             "otp": otp,
-                            "expiry": datetime.now() + timedelta(minutes=10)
+                            "expiry": datetime.now() + timedelta(minutes=10),
                         }
                         st.session_state["signup_otp_sent"] = True
                         st.success("Verification code sent to your email")
@@ -187,13 +190,9 @@ def signup_page():
                     cursor.execute("""
                         INSERT INTO users (username, email, password_hash, email_verified, role)
                         VALUES (%s, %s, %s, %s, %s)
-                    """, (
-                        pending["username"],
-                        pending["email"],
-                        hashed_pw,
-                        1,
-                        "student"
-                    ))
+                         """,
+                        (pending["username"], pending["email"], hashed_pw, 1, "student"),
+                    )
                     conn.commit()
 
                     st.success("Account created successfully! You can now log in.")
@@ -211,99 +210,156 @@ def signup_page():
 
 
 # ---------------- LOGIN ----------------
-
 def login_page(cookies):
-    import streamlit as st
-    from db import get_connection
 
     st.title("Login")
 
-    username = st.text_input("Username", key="login_username")
-    password = st.text_input("Password", type="password", key="login_password")
-
     conn = get_connection()
+    if conn is None:
+        st.error("Database connection failed")
+        st.stop()
+
     cursor = conn.cursor(dictionary=True)
 
-    if st.button("Login"):
-        cursor.execute("SELECT * FROM users WHERE username = %s", (username,))
-        user = cursor.fetchone()
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
 
-        if not user:
-            st.error("User does not exist")
+    # Buttons
+    col1, col_spacer, col2 = st.columns([1, 4, 1])
 
-        elif not user["email_verified"]:
-            st.error("Please verify your email before logging in")
+    with col1:
+        login_clicked = st.button("Login", use_container_width=True)
 
-        elif verify_password(password, user["password_hash"]):
+    with col_spacer:
+        st.empty()
 
-            st.session_state["logged_in"] = True
-            st.session_state["user_id"] = user["id"]
-            st.session_state["username"] = user["username"]
-            st.session_state["role"] = user["role"]
+    with col2:
+        forgot_clicked = st.button("Forgot Password?", use_container_width=True)
 
-            cookies["user_id"] = str(user["id"])
-            cookies["username"] = user["username"]
-            cookies["role"] = user["role"]
-            cookies.save()
+    # LOGIN LOGIC (FIXED)
+    if login_clicked:
+        if username and password:
+            try:
+                cursor.execute(
+                    "SELECT * FROM users WHERE username=%s",
+                    (username,)
+                )
+                user = cursor.fetchone()
 
-            st.success("Login successful!")
-            st.rerun()
+                # ✅ FIXED PASSWORD CHECK
+                if user and verify_password(password, user["password_hash"]):
+                    st.session_state["logged_in"] = True
+                    st.session_state["user_id"] = user["id"]
+                    st.session_state["username"] = user["username"]
+                    st.session_state["role"] = user["role"]
+                    st.session_state["page"] = "app"
 
+                    # Save cookies
+                    cookies["user_id"] = str(user["id"])
+                    cookies["username"] = user["username"]
+                    cookies["role"] = user["role"]
+                    cookies.save()
+
+                    st.success("Login successful!")
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password")
+
+            except Exception as e:
+                st.error(f"Database error: {e}")
         else:
-            st.error("Invalid credentials")
+            st.warning("Please enter both fields")
+
+    # Forgot password navigation
+    if forgot_clicked:
+        st.session_state["page"] = "forgot"
+        st.rerun()
 
     cursor.close()
     conn.close()
 
 # ---------------- FORGOT PASSWORD ----------------
 
+def _send_reset_code_if_possible(cursor, email):
+    if not valid_email(email):
+        return
+
+    if st.session_state.get("reset_last_sent_email") == email and st.session_state.get("reset_otp_sent"):
+        return
+
+    cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+    user = cursor.fetchone()
+    if not user:
+        return
+
+    otp = generate_otp()
+    sent = send_email_otp(email, otp, purpose="reset")
+    if sent:
+        st.session_state["reset_pending_email"] = email
+        st.session_state["reset_otp"] = otp
+        st.session_state["reset_otp_expiry"] = datetime.now() + timedelta(minutes=10)
+        st.session_state["reset_otp_sent"] = True
+        st.session_state["reset_stage"] = "verify_code"
+        st.session_state["reset_last_sent_email"] = email
+        st.rerun()
+
 def forgot_password_page():
     st.title("Forgot Password")
-
-    email = st.text_input("Enter your registered email", key="forgot_email")
-
     conn = get_connection()
     cursor = conn.cursor(dictionary=True)
+    stage = st.session_state.get("reset_stage", "email")
+    if stage == "email":
+        email = st.text_input("Enter your registered email", key="forgot_email")
 
-    if not st.session_state["reset_otp_sent"]:
-        if st.button("Send Reset Code"):
-            if not email:
-                st.error("Please enter your email")
-            elif not valid_email(email):
-                st.error("Enter a valid email address")
-            else:
-                cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-                user = cursor.fetchone()
+        if email:
+            _send_reset_code_if_possible(cursor, email)
 
-                if not user:
-                    st.error("No account found with this email")
+        st.info("Enter your registered email. A reset code will be sent automatically once the email is found.")
+
+    elif stage == "verify_code":
+        email = st.session_state.get("reset_pending_email", "")
+        st.write(f'Enter the reset code sent to your registered email id "{email}"')
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            if st.button("Verify Code"):
+                if datetime.now() > st.session_state["reset_otp_expiry"]:
+                    st.error("Reset code expired. Please resend the code.")
+                elif entered_otp != st.session_state["reset_otp"]:
+                    st.error("Invalid reset code")
                 else:
-                    otp = generate_otp()
-                    sent = send_email_otp(email, otp, purpose="reset")
+                    st.session_state["reset_stage"] = "set_password"
+                    st.success("Code verified")
+                    st.rerun()
 
-                    if sent:
-                        st.session_state["reset_pending_email"] = email
-                        st.session_state["reset_otp"] = otp
-                        st.session_state["reset_otp_expiry"] = datetime.now() + timedelta(minutes=10)
-                        st.session_state["reset_otp_sent"] = True
-                        st.success("Password reset code sent to your email")
+        with col2:
+            if st.button("Resend Code"):
+                otp = generate_otp()
+                sent = send_email_otp(email, otp, purpose="reset")
+                if sent:
+                    st.session_state["reset_otp"] = otp
+                    st.session_state["reset_otp_expiry"] = datetime.now() + timedelta(minutes=10)
+                    st.success("New reset code sent")
 
-    else:
-        entered_otp = st.text_input("Enter Reset Code", key="reset_otp_input")
+        with col3:
+            if st.button("Back"):
+                st.session_state["reset_stage"] = "email"
+                st.session_state["reset_otp_sent"] = False
+                st.session_state["reset_pending_email"] = None
+                st.session_state["reset_otp"] = None
+                st.session_state["reset_otp_expiry"] = None
+                st.session_state["reset_last_sent_email"] = None
+                st.rerun()
+
+    elif stage == "set_password":
         new_password = st.text_input("New Password", type="password", key="new_password")
         confirm_password = st.text_input("Confirm New Password", type="password", key="confirm_password")
 
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("Reset Password"):
-                if datetime.now() > st.session_state["reset_otp_expiry"]:
-                    st.error("Reset code expired. Please request a new one.")
-                    st.session_state["reset_otp_sent"] = False
-                    st.session_state["reset_pending_email"] = None
-                elif entered_otp != st.session_state["reset_otp"]:
-                    st.error("Invalid reset code")
-                elif not strong_password(new_password):
+            if st.button("Set New Password"):
+                if not strong_password(new_password):
                     st.error("Password must be at least 8 characters long")
                 elif new_password != confirm_password:
                     st.error("Passwords do not match")
@@ -314,17 +370,20 @@ def forgot_password_page():
                         UPDATE users
                         SET password_hash = %s
                         WHERE email = %s
-                    """, (hashed_pw, st.session_state["reset_pending_email"]))
+                    """, (hashed_pw, st.session_state["reset_pending_email"]),)
                     conn.commit()
 
                     st.success("Password reset successfully! You can now log in.")
+                    st.session_state["reset_stage"] = "email"
                     st.session_state["reset_otp_sent"] = False
                     st.session_state["reset_pending_email"] = None
+                    st.session_state["reset_otp"] = None
+                    st.session_state["reset_otp_expiry"] = None
+                    st.session_state["reset_last_sent_email"] = None
 
         with col2:
-            if st.button("Cancel Reset"):
-                st.session_state["reset_otp_sent"] = False
-                st.session_state["reset_pending_email"] = None
+            if st.button("Back"):
+                st.session_state["reset_stage"] = "verify_code"
                 st.rerun()
 
     cursor.close()
