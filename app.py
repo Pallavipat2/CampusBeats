@@ -64,6 +64,12 @@ st.markdown("""
     100% { box-shadow: 0 0 0 0 rgba(107, 181, 166, 0); }
 }
 
+@keyframes cb-float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+    100% { transform: translateY(0px); }
+}
+
 h1, h2, h3 {
     color: var(--cb-text);
     animation: cb-fade-up 0.5s ease both;
@@ -101,6 +107,174 @@ img {
     border-radius: 50%;
     object-fit: cover;
 }
+
+.cb-landing-hero {
+    position: relative;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 18% 24%, rgba(155, 200, 112, 0.36), transparent 24%),
+        radial-gradient(circle at 82% 18%, rgba(148, 205, 216, 0.34), transparent 26%),
+        linear-gradient(140deg, rgba(255,255,255,0.88), rgba(230,244,238,0.88));
+    border: 1px solid rgba(107, 181, 166, 0.28);
+    border-radius: 28px;
+    padding: 1.6rem 1.6rem 1.2rem 1.6rem;
+    box-shadow: 0 18px 40px rgba(52, 93, 83, 0.12);
+    margin-bottom: 1rem;
+}
+
+.cb-landing-hero::after {
+    content: "";
+    position: absolute;
+    inset: auto -10% -30% auto;
+    width: 220px;
+    height: 220px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(107,181,166,0.2), transparent 70%);
+    animation: cb-float 5s ease-in-out infinite;
+}
+
+.cb-kicker {
+    display: inline-block;
+    padding: .32rem .78rem;
+    border-radius: 999px;
+    background: rgba(24, 68, 61, 0.08);
+    color: #21584e;
+    font-size: .82rem;
+    font-weight: 700;
+    letter-spacing: .02em;
+    margin-bottom: .8rem;
+}
+
+.cb-hero-title {
+    font-size: clamp(2rem, 4vw, 3.6rem);
+    line-height: .98;
+    margin: 0;
+    color: #123d36;
+}
+
+.cb-hero-copy {
+    margin: .9rem 0 1.1rem 0;
+    font-size: 1.02rem;
+    color: #2e5d55;
+    max-width: 36rem;
+}
+
+.cb-mini-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .8rem;
+    margin-top: .8rem;
+}
+
+.cb-stat {
+    background: rgba(255,255,255,0.72);
+    border: 1px solid rgba(107, 181, 166, 0.18);
+    border-radius: 18px;
+    padding: .9rem 1rem;
+}
+
+.cb-stat strong {
+    display: block;
+    font-size: 1.2rem;
+    color: #18443d;
+}
+
+.cb-stat span {
+    color: #497268;
+    font-size: .86rem;
+}
+
+.cb-feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: .9rem;
+    margin-top: 1rem;
+}
+
+.cb-feature-card {
+    background: rgba(255,255,255,0.82);
+    border: 1px solid rgba(107, 181, 166, 0.18);
+    border-radius: 20px;
+    padding: 1rem;
+    min-height: 150px;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.05);
+}
+
+.cb-feature-card h4 {
+    margin: 0 0 .45rem 0;
+    color: #17453d;
+}
+
+.cb-feature-card p {
+    margin: 0;
+    color: #466a63;
+    font-size: .93rem;
+}
+
+.cb-vibe-panel {
+    background: linear-gradient(135deg, rgba(24,68,61,0.95), rgba(107,181,166,0.92));
+    color: white;
+    border-radius: 24px;
+    padding: 1.2rem;
+    box-shadow: 0 16px 30px rgba(24,68,61,0.18);
+}
+
+.cb-vibe-panel h4 {
+    margin: 0 0 .35rem 0;
+    color: white;
+}
+
+.cb-vibe-panel p {
+    margin: 0;
+    color: rgba(255,255,255,0.86);
+    font-size: .92rem;
+}
+
+.cb-vibe-badge {
+    display: inline-block;
+    margin-top: .9rem;
+    padding: .42rem .9rem;
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 999px;
+    font-weight: 700;
+}
+
+.cb-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    background: rgba(255,255,255,0.7);
+    border: 1px solid rgba(107, 181, 166, 0.2);
+    border-radius: 22px;
+    padding: .85rem 1rem;
+    margin-bottom: 1rem;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 10px 24px rgba(30, 74, 66, 0.08);
+}
+
+.cb-brand {
+    display: flex;
+    flex-direction: column;
+}
+
+.cb-brand strong {
+    color: #123d36;
+    font-size: 1.05rem;
+}
+
+.cb-brand span {
+    color: #4d736a;
+    font-size: .86rem;
+}
+
+@media (max-width: 900px) {
+    .cb-mini-stats,
+    .cb-feature-grid {
+        grid-template-columns: 1fr;
+    }
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -116,6 +290,9 @@ if "page" not in st.session_state:
 if "tracks" not in st.session_state:
     st.session_state["tracks"] = []
 
+if "current_menu" not in st.session_state:
+    st.session_state["current_menu"] = None
+
 # ================= RESTORE LOGIN =================
 if not st.session_state["logged_in"]:
     user_id = cookies.get("user_id")
@@ -123,26 +300,37 @@ if not st.session_state["logged_in"]:
     if user_id:
         try:
             user_id = int(user_id)
-
-            cursor.execute(
-                "SELECT id, username, role FROM users WHERE id=%s",
-                (user_id,)
-            )
-            user = cursor.fetchone()
-
-            if user:
-                st.session_state["logged_in"] = True
-                st.session_state["user_id"] = user["id"]
-                st.session_state["username"] = user["username"]
-                st.session_state["role"] = user["role"]
-                st.session_state["page"] = "app"
-            else:
-                cookies["user_id"] = ""
-                cookies.save()
-
-        except:
+        except (TypeError, ValueError):
             cookies["user_id"] = ""
+            cookies["username"] = ""
+            cookies["role"] = ""
+            cookies["current_menu"] = ""
             cookies.save()
+            user_id = None
+
+        if user_id is not None:
+            try:
+                cursor.execute(
+                    "SELECT id, username, role FROM users WHERE id=%s",
+                    (user_id,)
+                )
+                user = cursor.fetchone()
+
+                if user:
+                    st.session_state["logged_in"] = True
+                    st.session_state["user_id"] = user["id"]
+                    st.session_state["username"] = user["username"]
+                    st.session_state["role"] = user["role"]
+                    st.session_state["page"] = "app"
+                    st.session_state["current_menu"] = cookies.get("current_menu")
+                else:
+                    cookies["user_id"] = ""
+                    cookies["username"] = ""
+                    cookies["role"] = ""
+                    cookies["current_menu"] = ""
+                    cookies.save()
+            except Exception as e:
+                st.warning(f"Could not restore login session right now: {e}")
 
 # ================= SPOTIFY =================
 CLIENTID = os.getenv("CLIENTID")
@@ -157,25 +345,101 @@ sp = spotipy.Spotify(
 
 # ================= LANDING PAGE =================
 def show_landing_page():
-    st.markdown("""
-    <div class="cb-hero">
-      <h2 style="margin:0;">Campus Beats</h2>
-      <p style="margin:.35rem 0 0 0;">Find your vibe, track your mood, and share your campus soundtrack.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    if "landing_vibe" not in st.session_state:
+        st.session_state["landing_vibe"] = "Late-night Lo-fi"
+
+    vibe_options = [
+        "Late-night Lo-fi",
+        "Campus Pop Rush",
+        "Indie Rain Walk",
+        "Exam Survival Mode",
+        "Festival Energy",
+    ]
+
+    vibe_copy = {
+        "Late-night Lo-fi": "Soft beats, reflective moods, and journal entries that feel like a midnight window seat.",
+        "Campus Pop Rush": "Bright hooks, quick uploads, and a feed full of everyday campus main-character moments.",
+        "Indie Rain Walk": "Gentle chaos, cloudy skies, and songs that feel handwritten in the margins.",
+        "Exam Survival Mode": "Focus playlists, stress check-ins, and music that carries you through deadline season.",
+        "Festival Energy": "Big emotions, louder tracks, and posts that feel like the whole campus is awake at once.",
+    }
+
+    nav_col1, nav_col2 = st.columns([3.4, 1.4], gap="medium")
+
+    with nav_col1:
+        st.markdown("""
+        <div class="cb-topbar">
+            <div class="cb-brand">
+                <strong>Campus Beats</strong>
+                <span>Your campus soundtrack, mood by mood.</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with nav_col2:
+        nav_btn1, nav_btn2 = st.columns(2, gap="small")
+        with nav_btn1:
+            if st.button("Login", use_container_width=True, key="landing_nav_login"):
+                st.session_state["page"] = "login"
+                st.rerun()
+        with nav_btn2:
+            if st.button("Signup", use_container_width=True, key="landing_nav_signup"):
+                st.session_state["page"] = "signup"
+                st.rerun()
+
+    hero_col, vibe_col = st.columns([1.7, 1], gap="large")
+
+    with hero_col:
+        st.markdown("""
+        <div class="cb-landing-hero">
+            <div class="cb-kicker">Mood journal + social soundtrack</div>
+            <h1 class="cb-hero-title">Campus Beats</h1>
+            <p class="cb-hero-copy">
+                Discover songs that match your mood, turn daily feelings into music memories,
+                and share the soundtrack of campus life with people who get it.
+            </p>
+            <div class="cb-mini-stats">
+                <div class="cb-stat"><strong>Track moods</strong><span>Turn feelings into music-backed entries.</span></div>
+                <div class="cb-stat"><strong>Share moments</strong><span>Post songs, captions, videos, and campus updates.</span></div>
+                <div class="cb-stat"><strong>Find your circle</strong><span>Follow classmates and explore shared vibes.</span></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with vibe_col:
+        st.markdown('<div class="cb-vibe-panel">', unsafe_allow_html=True)
+        st.markdown("<h4>Pick today's vibe</h4><p>Tap through a few moods and see what Campus Beats could feel like right now.</p>", unsafe_allow_html=True)
+        selected_vibe = st.select_slider(
+            "Today's vibe",
+            options=vibe_options,
+            value=st.session_state["landing_vibe"],
+            label_visibility="collapsed",
+        )
+        st.session_state["landing_vibe"] = selected_vibe
+        st.markdown(f'<div class="cb-vibe-badge">{selected_vibe}</div>', unsafe_allow_html=True)
+        st.caption(vibe_copy[selected_vibe])
+        st.markdown("</div>", unsafe_allow_html=True)
 
     st.image("banner.png", use_container_width=True)
 
-    col1, col2, col3 = st.columns([1,2,1])
+    st.markdown("""
+    <div class="cb-feature-grid">
+        <div class="cb-feature-card">
+            <h4>Journal with music</h4>
+            <p>Log how you feel, save the song that matched that moment, and build a story of your semester through sound.</p>
+        </div>
+        <div class="cb-feature-card">
+            <h4>See mood patterns</h4>
+            <p>Use your profile dashboard to spot dominant moods, favorite genres, and how your listening changes over time.</p>
+        </div>
+        <div class="cb-feature-card">
+            <h4>Share campus energy</h4>
+            <p>Post videos, connect with classmates, and keep up with announcements and the emotional pulse of your campus.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with col2:
-        if st.button("Login", use_container_width=True):
-            st.session_state["page"] = "login"
-            st.rerun()
-
-        if st.button("Signup", use_container_width=True):
-            st.session_state["page"] = "signup"
-            st.rerun()
+    st.info("Start by choosing a vibe, then jump in and build your campus soundtrack.")
 
 # ================= ROUTING =================
 
@@ -211,17 +475,33 @@ else:
     role = st.session_state.get("role")
 
     if role == "admin":
+        menu_options = ["Admin Dashboard", "Profile", "Feed", "Discover People", "Logout"]
+    else:
+        menu_options = ["Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People", "Logout"]
+
+    saved_menu = st.session_state.get("current_menu") or cookies.get("current_menu")
+    if saved_menu not in menu_options:
+        saved_menu = menu_options[0]
+
+    if role == "admin":
         menu = st.sidebar.selectbox(
             "Menu",
-              ["Admin Dashboard", "Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People", "Logout"]
+            menu_options,
+            index=menu_options.index(saved_menu)
         )
         st.sidebar.success(f"Admin: {st.session_state['username']}")
     else:
         menu = st.sidebar.selectbox(
             "Menu",
-              ["Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People", "Logout"]
+            menu_options,
+            index=menu_options.index(saved_menu)
         )
         st.sidebar.success(st.session_state["username"])
+
+    if menu != st.session_state.get("current_menu"):
+        st.session_state["current_menu"] = menu
+        cookies["current_menu"] = menu
+        cookies.save()
 
     # ---------- PAGES ----------
     if menu == "Admin Dashboard":
@@ -253,6 +533,9 @@ else:
         logout(cookies)
         st.session_state["page"] = "landing"
         st.session_state["tracks"] = []
+        st.session_state["current_menu"] = None
+        cookies["current_menu"] = ""
+        cookies.save()
         st.success("Logged out successfully!")
         st.rerun()
 

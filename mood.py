@@ -1,6 +1,7 @@
 import streamlit as st
 import db 
 import os
+import pandas as pd
 import streamlit.components.v1 as components
 
 #=====================================================
@@ -155,6 +156,7 @@ def show_profile_page(cursor, conn):
     st.title("👤 My Profile")
 
     user_id = st.session_state["user_id"]
+    current_role = st.session_state.get("role", "student")
 
     cursor.execute("SELECT * FROM users WHERE id=%s",(user_id,))
     user = cursor.fetchone()
@@ -183,15 +185,22 @@ def show_profile_page(cursor, conn):
             value=user["bio"] if user["bio"] else ""
         )
 
-        campus_group = st.text_input(
-            "Campus Group / Department",
-            value=user["campus_group"] if user["campus_group"] else ""
-        )
+        campus_group = user["campus_group"] if user["campus_group"] else ""
+        year = user["year_of_study"] if user["year_of_study"] else ""
 
-        year = st.selectbox(
-            "Year of Study",
-            ["1st Year","2nd Year","3rd Year","4th Year","Postgrad"],
-        )
+        if current_role != "admin":
+            campus_group = st.text_input(
+                "Campus Group / Department",
+                value=campus_group
+            )
+
+            year_options = ["1st Year","2nd Year","3rd Year","4th Year","Postgrad"]
+            year_index = year_options.index(year) if year in year_options else 0
+            year = st.selectbox(
+                "Year of Study",
+                year_options,
+                index=year_index,
+            )
 
     if st.button("Save Profile"):
 
@@ -208,18 +217,107 @@ def show_profile_page(cursor, conn):
 
             profile_path = file_path
 
-        cursor.execute("""
-        UPDATE users
-        SET bio=%s, campus_group=%s, year_of_study=%s, profile_pic=%s
-        WHERE id=%s
-        """,(bio, campus_group, year, profile_path, user_id))
+        if current_role == "admin":
+            cursor.execute("""
+            UPDATE users
+            SET bio=%s, profile_pic=%s
+            WHERE id=%s
+            """,(bio, profile_path, user_id))
+        else:
+            cursor.execute("""
+            UPDATE users
+            SET bio=%s, campus_group=%s, year_of_study=%s, profile_pic=%s
+            WHERE id=%s
+            """,(bio, campus_group, year, profile_path, user_id))
 
         conn.commit()
 
         st.success("Profile updated!")
         st.rerun()
 
+    if current_role == "admin":
+        return
+
     st.divider()
+
+    st.subheader("Mood Dashboard")
+    st.caption("A quick look at your mood patterns, favorite genres, and posting trends over time.")
+
+    cursor.execute("""
+        SELECT
+            p.mood,
+            COALESCE(s.genre, 'No genre') AS genre,
+            DATE(p.created_at) AS entry_date
+        FROM posts p
+        LEFT JOIN songs s ON p.song_id = s.id
+        WHERE p.user_id = %s
+        ORDER BY p.created_at ASC
+    """, (user_id,))
+    entries = cursor.fetchall()
+
+    if not entries:
+        st.info("Create a few mood posts to unlock your dashboard insights.")
+        return
+
+    dashboard_df = pd.DataFrame(entries)
+    dashboard_df["entry_date"] = pd.to_datetime(dashboard_df["entry_date"])
+
+    mood_counts = (
+        dashboard_df.groupby("mood")
+        .size()
+        .reset_index(name="posts")
+        .sort_values("posts", ascending=False)
+    )
+
+    genre_counts = (
+        dashboard_df.groupby("genre")
+        .size()
+        .reset_index(name="posts")
+        .sort_values("posts", ascending=False)
+    )
+
+    posts_over_time = (
+        dashboard_df.groupby("entry_date")
+        .size()
+        .reset_index(name="posts")
+        .sort_values("entry_date")
+        .set_index("entry_date")
+    )
+
+    mood_trends = (
+        dashboard_df.groupby(["entry_date", "mood"])
+        .size()
+        .reset_index(name="posts")
+        .pivot(index="entry_date", columns="mood", values="posts")
+        .fillna(0)
+        .sort_index()
+    )
+
+    dominant_mood = mood_counts.iloc[0]["mood"]
+    dominant_genre = genre_counts.iloc[0]["genre"]
+    total_posts = int(len(dashboard_df))
+
+    stat1, stat2, stat3 = st.columns(3)
+    stat1.metric("Dominant Mood", dominant_mood)
+    stat2.metric("Dominant Genre", dominant_genre)
+    stat3.metric("Total Entries", total_posts)
+
+    chart_col1, chart_col2 = st.columns(2)
+
+    with chart_col1:
+        st.markdown("**Mood Distribution**")
+        st.bar_chart(mood_counts.set_index("mood"))
+
+    with chart_col2:
+        st.markdown("**Genre Distribution**")
+        st.bar_chart(genre_counts.set_index("genre"))
+
+    st.markdown("**Posting Trend Over Time**")
+    st.line_chart(posts_over_time)
+
+    if not mood_trends.empty:
+        st.markdown("**Mood Trends Over Time**")
+        st.area_chart(mood_trends)
     
     
     

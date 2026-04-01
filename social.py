@@ -2,10 +2,49 @@
 import streamlit as st
 import os
 import uuid
+import base64
+import mimetypes
+import streamlit.components.v1 as components
+from datetime import datetime
 
 # ================= CONSTANTS =================
 DEFAULT_PROFILE_PIC = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 UPLOAD_FOLDER = "uploads/videos"
+
+
+def format_post_time(created_at):
+    if created_at is None:
+        return "Unknown time"
+
+    if isinstance(created_at, str):
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                created_at = datetime.strptime(created_at, fmt)
+                break
+            except ValueError:
+                continue
+
+    if isinstance(created_at, datetime):
+        return created_at.strftime("%d %b %Y, %I:%M %p")
+
+    return str(created_at)
+
+
+def get_image_src(image_path):
+    if not image_path:
+        return DEFAULT_PROFILE_PIC
+
+    if str(image_path).startswith(("http://", "https://", "data:")):
+        return image_path
+
+    if os.path.exists(image_path):
+        mime_type, _ = mimetypes.guess_type(image_path)
+        mime_type = mime_type or "image/jpeg"
+        with open(image_path, "rb") as image_file:
+            encoded = base64.b64encode(image_file.read()).decode("utf-8")
+        return f"data:{mime_type};base64,{encoded}"
+
+    return DEFAULT_PROFILE_PIC
 
 def ensure_comments_table(cursor, conn):
     """Create comments table if it does not exist."""
@@ -111,6 +150,31 @@ def delete_post(cursor, conn, post_id):
     conn.commit()
 
 
+def ensure_student_follows_admin(cursor, conn, user_id):
+    cursor.execute("SELECT id, role FROM users WHERE id=%s", (user_id,))
+    user = cursor.fetchone()
+
+    if not user or user["role"] == "admin":
+        return
+
+    cursor.execute("""
+        SELECT id FROM users
+        WHERE role='admin'
+        ORDER BY id ASC
+        LIMIT 1
+    """)
+    admin_user = cursor.fetchone()
+
+    if not admin_user:
+        return
+
+    cursor.execute("""
+        INSERT IGNORE INTO follows (follower_id, following_id)
+        VALUES (%s, %s)
+    """, (user_id, admin_user["id"]))
+    conn.commit()
+
+
 def show_comments_section(cursor, conn, post_id, current_user):
     comments_key = f"show_comments_{post_id}"
 
@@ -166,6 +230,8 @@ def show_comments_section(cursor, conn, post_id, current_user):
 # =====================================================
 def show_feed(cursor, conn, current_user):
     ensure_comments_table(cursor, conn)
+    ensure_student_follows_admin(cursor, conn, current_user)
+    current_role = st.session_state.get("role", "student")
 
     st.markdown("""
     <style>
@@ -183,7 +249,7 @@ def show_feed(cursor, conn, current_user):
         padding: 18px;
         margin-bottom: 20px;
         box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-         animation: cb-card-in 0.35s ease both;
+        animation: cb-card-in 0.35s ease both;
         transition: transform .2s ease, box-shadow .2s ease;
     }
 
@@ -197,12 +263,38 @@ def show_feed(cursor, conn, current_user):
         border: 2px solid #DAA520;
     }
 
+    .admin-post,
+    .admin-post b,
+    .admin-post small,
+    .admin-post .post-text,
+    .admin-post .post-song-line {
+        color: #ffffff !important;
+        text-shadow:
+            -1px -1px 0 #bf2a52,
+             1px -1px 0 #bf2a52,
+            -1px  1px 0 #bf2a52,
+             1px  1px 0 #bf2a52;
+    }
+
     .announcement-post {
         background: linear-gradient(135deg, #CAD7A5, #6BB5A6);
         border: 2px solid #617F6A;
         box-shadow: 0 8px 25px rgba(207, 229, 213,0.4);
-          position: relative;
+        position: relative;
         overflow: hidden;
+    }
+
+    .announcement-post,
+    .announcement-post b,
+    .announcement-post small,
+    .announcement-post .post-text,
+    .announcement-post .post-song-line {
+        color: #ffffff !important;
+        text-shadow:
+            -1px -1px 0 #004040,
+             1px -1px 0 #004040,
+            -1px  1px 0 #004040,
+             1px  1px 0 #004040;
     }
 
     .announcement-post::after {
@@ -222,11 +314,79 @@ def show_feed(cursor, conn, current_user):
         border: 1px solid #c8e4d6;
     }
 
+    .post-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+    }
+
+    .post-avatar {
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        object-fit: cover;
+        background: rgba(255,255,255,0.95);
+        border: 2px solid rgba(255,255,255,0.92);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        flex-shrink: 0;
+    }
+
+    .post-user-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .post-user-meta b {
+        line-height: 1.1;
+    }
+
+    .post-song-line {
+        display: block;
+        margin: 10px 0 14px 0;
+    }
+
+    .post-text {
+        margin-top: 12px;
+    }
+
+    .post-player {
+        margin-top: 10px;
+        border-radius: 14px;
+        overflow: hidden;
+    }
+
+    .post-shell {
+        margin-bottom: 20px;
+    }
+
     </style>
     """, unsafe_allow_html=True,)
      
     cursor.execute("SELECT following_id FROM follows WHERE follower_id=%s", (current_user,))
     following_ids = {row["following_id"] for row in cursor.fetchall()}
+
+    if current_role != "admin":
+        if "feed_view_mode" not in st.session_state:
+            st.session_state["feed_view_mode"] = "all"
+
+        filter_col1, filter_col2 = st.columns(2)
+        with filter_col1:
+            if st.button("All Visible Posts", use_container_width=True):
+                st.session_state["feed_view_mode"] = "all"
+        with filter_col2:
+            if st.button("My Circle", use_container_width=True):
+                st.session_state["feed_view_mode"] = "circle"
+
+        st.caption(
+            "Showing your posts and people you follow."
+            if st.session_state["feed_view_mode"] == "circle"
+            else "Showing all posts you are allowed to view."
+        )
+    else:
+        st.session_state["feed_view_mode"] = "all"
+        st.caption("Showing all posts you are allowed to view.")
 
     # ================= DB =================
     cursor.execute("""
@@ -235,11 +395,22 @@ def show_feed(cursor, conn, current_user):
             users.username,
             users.profile_pic,
             users.role,
+            songs.song_name,
+            songs.artist_name,
+            songs.spotify_track_id,
             COUNT(likes.id) AS like_count
         FROM posts
         JOIN users ON posts.user_id = users.id
+        LEFT JOIN songs ON posts.song_id = songs.id
         LEFT JOIN likes ON posts.id = likes.post_id
-        GROUP BY posts.id
+        GROUP BY
+            posts.id,
+            users.username,
+            users.profile_pic,
+            users.role,
+            songs.song_name,
+            songs.artist_name,
+            songs.spotify_track_id
         ORDER BY
             CASE
                 WHEN users.role = 'admin' AND posts.post_type = 'announcement' THEN 0
@@ -251,18 +422,33 @@ def show_feed(cursor, conn, current_user):
 
     posts = [p for p in cursor.fetchall() if can_view_post(p, current_user, following_ids)]
 
+    if current_role != "admin" and st.session_state["feed_view_mode"] == "circle":
+        posts = [
+            post for post in posts
+            if post["user_id"] == current_user or post["user_id"] in following_ids
+        ]
+
     if not posts:
-        st.info("No posts yet.")
+        if current_role != "admin" and st.session_state["feed_view_mode"] == "circle":
+            st.info("No posts yet from you or the people you follow.")
+        else:
+            st.info("No posts yet.")
         return
 
     # ================= FEED =================
-    current_role = st.session_state.get("role", "student")
-
     for post in posts:
 
         role = post.get("role", "student")
         post_type = post.get("post_type", "music")
         post_id = post["id"]
+        posted_at = format_post_time(post.get("created_at"))
+        song_name = post.get("song_name")
+        artist_name = post.get("artist_name")
+        spotify_track_id = post.get("spotify_track_id")
+        post_text = post.get("caption") or post.get("journal_text") or ""
+        profile_pic = get_image_src(post.get("profile_pic") or DEFAULT_PROFILE_PIC)
+        song_line = ""
+        has_attachments = bool(post.get("image_path") or post.get("video_path") or post.get("attachment_link"))
 
         if role == "admin" and post_type == "announcement":
             css_class = "post-card announcement-post"
@@ -271,47 +457,94 @@ def show_feed(cursor, conn, current_user):
         else:
             css_class = "post-card normal-post"
 
-    
-        content = f"""
-        <div class=\"{css_class}\">
-            <b>{post['username']}</b>
-            <br>
-            <small>{post['created_at']}</small>
-            <br><br>
-            {post.get('caption') or post.get('journal_text') or ''}
-        </div>
+        if song_name and artist_name:
+            song_line = f"<small class=\"post-song-line\"><b>Song:</b> {song_name} by {artist_name}</small>"
+        elif song_name:
+            song_line = f"<small class=\"post-song-line\"><b>Song:</b> {song_name}</small>"
+
+        player_html = ""
+        if spotify_track_id:
+            player_html = f"""
+            <div class="post-player">
+                <iframe
+                    src="https://open.spotify.com/embed/track/{spotify_track_id}"
+                    width="100%"
+                    height="80"
+                    frameborder="0"
+                    allowtransparency="true"
+                    allow="encrypted-media">
+                </iframe>
+            </div>
+            """
+
+        text_html = ""
+        if post_text:
+            text_html = f'<div class="post-text">{post_text}</div>'
+
+        card_content = f"""
+            <div class="{css_class}">
+            <div class="post-header">
+                <img src="{profile_pic}" class="post-avatar" alt="{post['username']} profile picture">
+                <div class="post-user-meta">
+                    <b>{post['username']}</b>
+                    <small>Posted: {posted_at}</small>
+                </div>
+            </div>
+            {song_line}
         """
 
-        st.markdown(content, unsafe_allow_html=True)
+        can_delete = (post["user_id"] == current_user) or (current_role == "admin")
 
-        if post.get("video_path") and os.path.exists(post["video_path"]):
-            st.video(post["video_path"])
+        with st.container():
+            st.markdown('<div class="post-shell">', unsafe_allow_html=True)
+            st.markdown(card_content, unsafe_allow_html=True)
+
+            if spotify_track_id:
+                components.iframe(
+                    f"https://open.spotify.com/embed/track/{spotify_track_id}",
+                    height=80,
+                )
+
+            if post_text:
+                st.markdown(f'<div class="post-text">{post_text}</div>', unsafe_allow_html=True)
+
+            if has_attachments:
+                with st.expander("Attachments"):
+                    if post.get("image_path") and os.path.exists(post["image_path"]):
+                        st.image(post["image_path"], use_container_width=True)
+
+                    if post.get("video_path") and os.path.exists(post["video_path"]):
+                        st.video(post["video_path"])
+
+                    if post.get("attachment_link"):
+                        st.link_button("Open attachment link", post["attachment_link"])
 
             cursor.execute("SELECT id FROM likes WHERE user_id=%s AND post_id=%s", (current_user, post_id))
-        liked = cursor.fetchone()
+            liked = cursor.fetchone()
 
-        like_col, delete_col = st.columns([2, 1])
+            like_col, delete_col = st.columns([2, 1])
 
-        with like_col:
-            if liked:
-                if st.button(f"💔 Unlike {post['like_count']}", key=f"u_{post_id}"):
-                    cursor.execute("DELETE FROM likes WHERE user_id=%s AND post_id=%s", (current_user, post_id))
-                    conn.commit()
+            with like_col:
+                if liked:
+                    if st.button(f"💔 Unlike {post['like_count']}", key=f"u_{post_id}"):
+                        cursor.execute("DELETE FROM likes WHERE user_id=%s AND post_id=%s", (current_user, post_id))
+                        conn.commit()
+                        st.rerun()
+                else:
+                    if st.button(f"❤️ Like {post['like_count']}", key=f"l_{post_id}"):
+                        cursor.execute("INSERT INTO likes (user_id, post_id) VALUES (%s,%s)", (current_user, post_id))
+                        conn.commit()
+                        st.rerun()
+
+            with delete_col:
+                if can_delete and st.button("🗑 Delete Post", key=f"del_{post_id}"):
+                    delete_post(cursor, conn, post_id)
+                    st.success("Post deleted")
                     st.rerun()
-            else:
-                if st.button(f"❤️ Like {post['like_count']}", key=f"l_{post_id}"):
-                    cursor.execute("INSERT INTO likes (user_id, post_id) VALUES (%s,%s)", (current_user, post_id))
-                    conn.commit()
-                    st.rerun()
 
-        with delete_col:
-            can_delete = (post["user_id"] == current_user) or (current_role == "admin")
-            if can_delete and st.button("🗑 Delete Post", key=f"del_{post_id}"):
-                delete_post(cursor, conn, post_id)
-                st.success("Post deleted")
-                st.rerun()
+            show_comments_section(cursor, conn, post_id, current_user)
+            st.markdown("</div></div>", unsafe_allow_html=True)
 
-        show_comments_section(cursor, conn, post_id, current_user)
         st.divider()
         
 # =====================================================
@@ -345,20 +578,42 @@ def show_my_mood_posts(cursor, conn, current_user):
     if selected_visibility:
         cursor.execute(
             """
-            SELECT id, created_at, mood, visibility, journal_text, caption, video_path
+            SELECT
+                posts.id,
+                posts.created_at,
+                posts.mood,
+                posts.visibility,
+                posts.journal_text,
+                posts.caption,
+                posts.video_path,
+                songs.song_name,
+                songs.artist_name,
+                songs.spotify_track_id
             FROM posts
-            WHERE user_id=%s AND visibility=%s
-            ORDER BY created_at DESC
+            LEFT JOIN songs ON posts.song_id = songs.id
+            WHERE posts.user_id=%s AND posts.visibility=%s
+            ORDER BY posts.created_at DESC
             """,
             (current_user, selected_visibility),
         )
     else:
         cursor.execute(
             """
-            SELECT id, created_at, mood, visibility, journal_text, caption, video_path
+            SELECT
+                posts.id,
+                posts.created_at,
+                posts.mood,
+                posts.visibility,
+                posts.journal_text,
+                posts.caption,
+                posts.video_path,
+                songs.song_name,
+                songs.artist_name,
+                songs.spotify_track_id
             FROM posts
-            WHERE user_id=%s
-            ORDER BY created_at DESC
+            LEFT JOIN songs ON posts.song_id = songs.id
+            WHERE posts.user_id=%s
+            ORDER BY posts.created_at DESC
             """,
             (current_user,),
         )
@@ -372,7 +627,20 @@ def show_my_mood_posts(cursor, conn, current_user):
         return
 
     for post in posts:
-        st.markdown(f"**{post['created_at']}** · `{post['visibility']}`")
+        created_at = format_post_time(post.get("created_at"))
+        st.markdown(f"**{created_at}** · `{post['visibility']}`")
+
+        if post.get("song_name") and post.get("artist_name"):
+            st.markdown(f"**Song:** {post['song_name']} by {post['artist_name']}")
+        elif post.get("song_name"):
+            st.markdown(f"**Song:** {post['song_name']}")
+
+        if post.get("spotify_track_id"):
+            components.iframe(
+                f"https://open.spotify.com/embed/track/{post['spotify_track_id']}",
+                height=80,
+            )
+
         body = post.get("journal_text") or post.get("caption") or "(No text)"
         st.write(body)
 
@@ -390,13 +658,38 @@ def show_my_mood_posts(cursor, conn, current_user):
 # =====================================================
 def follow_user(cursor, conn, current_user, target_user):
     try:
+        cursor.execute("SELECT role FROM users WHERE id=%s", (current_user,))
+        current_user_data = cursor.fetchone()
+        cursor.execute("SELECT role FROM users WHERE id=%s", (target_user,))
+        target_user_data = cursor.fetchone()
+
+        if not current_user_data or not target_user_data:
+            st.error("User not found.")
+            return
+
+        if current_user_data["role"] == "admin":
+            st.info("Admin accounts cannot follow other users.")
+            return
+
+        if target_user_data["role"] == "admin":
+            cursor.execute("""
+                INSERT IGNORE INTO follows (follower_id, following_id)
+                VALUES (%s, %s)
+            """, (current_user, target_user))
+            conn.commit()
+            st.success("You are now following the admin account.")
+            return
+
         cursor.execute("""
-            INSERT INTO follows (follower_id, following_id)
-            VALUES (%s, %s)
-            ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP
+            INSERT INTO follow_requests (requester_id, recipient_id, status)
+            VALUES (%s, %s, 'pending')
+            ON DUPLICATE KEY UPDATE
+                status = 'pending',
+                updated_at = CURRENT_TIMESTAMP
         """, (current_user, target_user))
 
         conn.commit()
+        st.success("Follow request sent.")
 
     except Exception as e:
         print("Follow error:", e)
@@ -435,16 +728,27 @@ def decline_follow_request(cursor, conn, request_id):
     st.info("Follow request declined.")
 
 
+def unsend_follow_request(cursor, conn, requester_id, recipient_id):
+    cursor.execute("""
+        DELETE FROM follow_requests
+        WHERE requester_id=%s AND recipient_id=%s AND status='pending'
+    """, (requester_id, recipient_id))
+    conn.commit()
+    st.info("Follow request unsent.")
+
+
 # =====================================================
 # ================= DISCOVER USERS =====================
 # =====================================================
 def discover_users(cursor, conn):
     ensure_follow_requests_table(cursor, conn)
+    ensure_student_follows_admin(cursor, conn, st.session_state["user_id"])
 
     st.title("🔍 Discover People")
     st.caption("Find classmates, view bios, and connect through follow requests.")
 
     current_user = st.session_state["user_id"]
+    current_role = st.session_state.get("role", "student")
    
     st.markdown("""
     <style>
@@ -488,10 +792,48 @@ def discover_users(cursor, conn):
         color: #fff;
         background: linear-gradient(120deg, #6bb5a6, #9bc870);
     }
+    .request-status {
+        color: #2b7a69;
+        font-size: .82rem;
+        font-weight: 700;
+        margin-top: .35rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 
     search = st.text_input("Search users", placeholder="Search by username...")
+
+    cursor.execute("SELECT COUNT(*) AS count FROM follows WHERE following_id=%s", (current_user,))
+    followers_count = cursor.fetchone()["count"]
+
+    cursor.execute("SELECT COUNT(*) AS count FROM follows WHERE follower_id=%s", (current_user,))
+    following_count = cursor.fetchone()["count"]
+
+    if "show_followers_list" not in st.session_state:
+        st.session_state["show_followers_list"] = False
+
+    if "show_following_list" not in st.session_state:
+        st.session_state["show_following_list"] = False
+
+    network_col1, network_col2 = st.columns(2)
+    with network_col1:
+        followers_label = (
+            f"Hide Followers ({followers_count})"
+            if st.session_state["show_followers_list"]
+            else f"Show Followers ({followers_count})"
+        )
+        if st.button(followers_label, use_container_width=True):
+            st.session_state["show_followers_list"] = not st.session_state["show_followers_list"]
+            st.rerun()
+    with network_col2:
+        following_label = (
+            f"Hide Following ({following_count})"
+            if st.session_state["show_following_list"]
+            else f"Show Following ({following_count})"
+        )
+        if st.button(following_label, use_container_width=True):
+            st.session_state["show_following_list"] = not st.session_state["show_following_list"]
+            st.rerun()
 
     cursor.execute("""
         SELECT fr.id, fr.requester_id, u.username, u.bio, u.profile_pic, fr.created_at
@@ -522,19 +864,66 @@ def discover_users(cursor, conn):
                         decline_follow_request(cursor, conn, req["id"])
                         st.rerun()
 
+    if st.session_state["show_followers_list"]:
+        cursor.execute("""
+            SELECT u.username, u.profile_pic, u.bio
+            FROM follows f
+            JOIN users u ON u.id = f.follower_id
+            WHERE f.following_id=%s
+            ORDER BY u.username ASC
+        """, (current_user,))
+        followers = cursor.fetchall()
+
+        with st.container(border=True):
+            st.subheader("Followers")
+            if not followers:
+                st.write("No followers yet.")
+            else:
+                for follower in followers:
+                    col1, col2 = st.columns([1, 6])
+                    with col1:
+                        st.image(follower["profile_pic"] or DEFAULT_PROFILE_PIC, width=52)
+                    with col2:
+                        st.markdown(f"**{follower['username']}**")
+                        st.caption(follower["bio"] or "No bio yet.")
+
+    if st.session_state["show_following_list"]:
+        cursor.execute("""
+            SELECT u.username, u.profile_pic, u.bio
+            FROM follows f
+            JOIN users u ON u.id = f.following_id
+            WHERE f.follower_id=%s
+            ORDER BY u.username ASC
+        """, (current_user,))
+        following_users = cursor.fetchall()
+
+        with st.container(border=True):
+            st.subheader("Following")
+            if not following_users:
+                st.write("Not following anyone yet.")
+            else:
+                for followed_user in following_users:
+                    col1, col2 = st.columns([1, 6])
+                    with col1:
+                        st.image(followed_user["profile_pic"] or DEFAULT_PROFILE_PIC, width=52)
+                    with col2:
+                        st.markdown(f"**{followed_user['username']}**")
+                        st.caption(followed_user["bio"] or "No bio yet.")
+
     st.markdown('<div class="discover-wrap">', unsafe_allow_html=True)
     st.subheader("🌟 Discover Students")
     
     if search:
         cursor.execute("""
-           SELECT id, username, bio, profile_pic, campus_group, year_of_study
+           SELECT id, username, bio, profile_pic, campus_group, year_of_study, role
             FROM users
-            WHERE username LIKE %s
+            WHERE username LIKE %s AND role != 'admin'
         """, (f"%{search}%",))
     else:
         cursor.execute("""
-            SELECT id, username, bio, profile_pic, campus_group, year_of_study
+            SELECT id, username, bio, profile_pic, campus_group, year_of_study, role
             FROM users
+            WHERE role != 'admin'
         """)
 
     users = cursor.fetchall()
@@ -563,6 +952,8 @@ def discover_users(cursor, conn):
         with col2:
             st.markdown('<div class="discover-card">', unsafe_allow_html=True)
             st.markdown(f'<div class="discover-name">{user["username"]}</div>', unsafe_allow_html=True)
+            if outgoing_request and outgoing_request["status"] == "pending":
+                st.markdown('<div class="request-status">Request sent</div>', unsafe_allow_html=True)
             campus_group = user.get("campus_group") or "Campus community"
             year = user.get("year_of_study") or "Year not set"
             st.markdown(f'<div class="discover-meta">🏫 {campus_group} • 📘 {year}</div>', unsafe_allow_html=True)
@@ -573,20 +964,29 @@ def discover_users(cursor, conn):
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col3:
-            if following:
-                if st.button("Unfollow", key=f"u{user['id']}"):
-                    unfollow_user(cursor, conn, current_user, user["id"])
-                    st.rerun()
-                elif outgoing_request and outgoing_request["status"] == "pending":
-                    st.markdown('<span class="request-chip">Request sent</span>', unsafe_allow_html=True)
-            elif outgoing_request and outgoing_request["status"] == "declined":
-                if st.button("Follow Again", key=f"rf{user['id']}"):
-                    follow_user(cursor, conn, current_user, user["id"])
-                    st.rerun()
+            if current_role == "admin":
+                st.caption("Admin cannot follow accounts")
             else:
-                if st.button("Follow", key=f"f{user['id']}"):
-                    follow_user(cursor, conn, current_user, user["id"])
-                    st.rerun()
+                is_admin_target = user.get("role") == "admin"
+
+                if following:
+                    if is_admin_target:
+                        st.markdown('<span class="request-chip">Following admin</span>', unsafe_allow_html=True)
+                    elif st.button("Unfollow", key=f"u{user['id']}"):
+                        unfollow_user(cursor, conn, current_user, user["id"])
+                        st.rerun()
+                elif outgoing_request and outgoing_request["status"] == "pending":
+                    if st.button("Unsend", key=f"unsend_{user['id']}"):
+                        unsend_follow_request(cursor, conn, current_user, user["id"])
+                        st.rerun()
+                elif outgoing_request and outgoing_request["status"] == "declined":
+                    if st.button("Follow Again", key=f"rf{user['id']}"):
+                        follow_user(cursor, conn, current_user, user["id"])
+                        st.rerun()
+                else:
+                    if st.button("Follow", key=f"f{user['id']}"):
+                        follow_user(cursor, conn, current_user, user["id"])
+                        st.rerun()
 
         st.divider()
         st.markdown('</div>', unsafe_allow_html=True)

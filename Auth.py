@@ -193,6 +193,22 @@ def signup_page():
                          """,
                         (pending["username"], pending["email"], hashed_pw, 1, "student"),
                     )
+                    new_user_id = cursor.lastrowid
+
+                    cursor.execute("""
+                        SELECT id FROM users
+                        WHERE role = 'admin'
+                        ORDER BY id ASC
+                        LIMIT 1
+                    """)
+                    admin_user = cursor.fetchone()
+
+                    if admin_user:
+                        cursor.execute("""
+                            INSERT IGNORE INTO follows (follower_id, following_id)
+                            VALUES (%s, %s)
+                        """, (new_user_id, admin_user["id"]))
+
                     conn.commit()
 
                     st.success("Account created successfully! You can now log in.")
@@ -396,8 +412,23 @@ def logout(cookies):
     st.session_state["user_id"] = None
     st.session_state["username"] = None
     st.session_state["role"] = None
+    st.session_state["page"] = "landing"
+    st.session_state["tracks"] = []
+    st.session_state["current_menu"] = None
+    st.session_state["feed_view_mode"] = "all"
+    st.session_state["show_followers_list"] = False
+    st.session_state["show_following_list"] = False
+    st.session_state["signup_otp_sent"] = False
+    st.session_state["signup_pending"] = None
+    st.session_state["reset_stage"] = "email"
+    st.session_state["reset_otp_sent"] = False
+    st.session_state["reset_pending_email"] = None
+    st.session_state["reset_otp"] = None
+    st.session_state["reset_otp_expiry"] = None
+    st.session_state["reset_last_sent_email"] = None
 
     cookies["user_id"] = ""
     cookies["username"] = ""
     cookies["role"] = ""
+    cookies["current_menu"] = ""
     cookies.save()
