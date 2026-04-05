@@ -15,6 +15,7 @@ from Auth import (
 import spotipy
 from spotipy.exceptions import SpotifyOauthError
 from spotipy.oauth2 import SpotifyClientCredentials
+from spotify_playback import handle_spotify_oauth_callback
 
 st.set_page_config(page_title="Campus Beats", layout="wide")
 
@@ -48,11 +49,13 @@ components.html(
 
 params = st.query_params
 
+handle_spotify_oauth_callback()
+
 if (
     params.get("type") == "recovery"
     or (params.get("access_token") and params.get("refresh_token"))
     or params.get("token_hash")
-    or params.get("code")
+    or (params.get("code") and params.get("spotify_auth") != "1")
 ):
     from Auth import reset_password_page
     reset_password_page(None)
