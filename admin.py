@@ -1,29 +1,77 @@
 import os
 import uuid
+
 import streamlit as st
+
+from db import result_data
 
 
 ADMIN_IMAGE_FOLDER = "uploads/admin_images"
 ADMIN_VIDEO_FOLDER = "uploads/admin_videos"
 
 
-def ensure_admin_attachment_columns(cursor, conn):
-    cursor.execute("SHOW COLUMNS FROM posts LIKE 'image_path'")
-    has_image_path = cursor.fetchone()
-    if not has_image_path:
-        cursor.execute("ALTER TABLE posts ADD COLUMN image_path VARCHAR(255) NULL")
+def _insert_announcement_post(supabase, payload):
+    attempts = [
+        payload,
+        {
+            **payload,
+            "image_url": payload.get("image_path"),
+            **({"image_path": None} if "image_path" in payload else {}),
+        },
+        {
+            **payload,
+            "video_url": payload.get("video_path"),
+            **({"video_path": None} if "video_path" in payload else {}),
+        },
+        {
+            **payload,
+            "image_url": payload.get("image_path"),
+            "video_url": payload.get("video_path"),
+            **({"image_path": None} if "image_path" in payload else {}),
+            **({"video_path": None} if "video_path" in payload else {}),
+        },
+    ]
 
-    cursor.execute("SHOW COLUMNS FROM posts LIKE 'attachment_link'")
-    has_attachment_link = cursor.fetchone()
-    if not has_attachment_link:
-        cursor.execute("ALTER TABLE posts ADD COLUMN attachment_link TEXT NULL")
+    seen_signatures = set()
+    last_error = None
 
-    conn.commit()
+    for attempt in attempts:
+        cleaned_attempt = {key: value for key, value in attempt.items() if value is not None}
+        signature = tuple(sorted(cleaned_attempt.keys()))
+        if signature in seen_signatures:
+            continue
+        seen_signatures.add(signature)
+
+        try:
+            supabase.table("posts").insert(cleaned_attempt).execute()
+            return True
+        except Exception as error:
+            last_error = error
+            message = str(error)
+            if "column of 'posts' in the schema cache" in message:
+                continue
+            raise
+
+    fallback_payload = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"image_path", "image_url", "video_path", "video_url", "attachment_link"} and value is not None
+    }
+    try:
+        supabase.table("posts").insert(fallback_payload).execute()
+        st.warning(
+            "Announcement posted without attachments because Supabase has not refreshed the "
+            "`posts` schema cache for attachment columns yet."
+        )
+        return False
+    except Exception:
+        if last_error is not None:
+            raise last_error
+        raise
 
 
-def admin_post_announcement(cursor, conn):
-    ensure_admin_attachment_columns(cursor, conn)
-    st.subheader("📢 Post Announcement")
+def admin_post_announcement(supabase):
+    st.subheader("Post Announcement")
 
     announcement_text = st.text_area("Announcement")
 
@@ -31,17 +79,17 @@ def admin_post_announcement(cursor, conn):
         uploaded_image = st.file_uploader(
             "Add photo",
             type=["png", "jpg", "jpeg", "webp"],
-            key="admin_announcement_image"
+            key="admin_announcement_image",
         )
         uploaded_video = st.file_uploader(
             "Add video",
             type=["mp4", "mov", "avi", "mkv"],
-            key="admin_announcement_video"
+            key="admin_announcement_video",
         )
         attachment_link = st.text_input(
             "Add link",
             placeholder="https://...",
-            key="admin_announcement_link"
+            key="admin_announcement_link",
         )
 
     if st.button("Post Announcement"):
@@ -69,33 +117,36 @@ def admin_post_announcement(cursor, conn):
             with open(video_path, "wb") as video_file:
                 video_file.write(uploaded_video.read())
 
-        cursor.execute("""
-            INSERT INTO posts (user_id, caption, post_type, visibility, image_path, video_path, attachment_link)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (
-            admin_user_id,
-            announcement_text,
-            "announcement",
-            "public",
-            image_path,
-            video_path,
-            attachment_link.strip() or None,
-        ))
+        payload = {
+            "user_id": admin_user_id,
+            "caption": announcement_text,
+            "post_type": "announcement",
+            "visibility": "public",
+            "image_path": image_path,
+            "video_path": video_path,
+            "attachment_link": attachment_link.strip() or None,
+        }
 
-        conn.commit()
-        st.success("Announcement posted successfully!")
+        try:
+            inserted_with_default_message = _insert_announcement_post(supabase, payload)
+        except Exception as error:
+            st.error(f"Could not post announcement: {error}")
+            return
+
+        if inserted_with_default_message:
+            st.success("Announcement posted successfully!")
 
 
-def admin_remove_user(cursor, conn):
-    st.subheader("🗑 Remove User")
+def admin_remove_user(supabase):
+    st.subheader("Remove User")
 
-    cursor.execute("""
-        SELECT id, username, email, role
-        FROM users
-        WHERE role != 'admin'
-        ORDER BY username
-    """)
-    users = cursor.fetchall()
+    users = result_data(
+        supabase.table("users")
+        .select("id, username, email, role")
+        .neq("role", "admin")
+        .order("username")
+        .execute()
+    )
 
     if not users:
         st.info("No removable users found.")
@@ -109,27 +160,26 @@ def admin_remove_user(cursor, conn):
     selected_user_label = st.selectbox("Select user to remove", list(user_map.keys()))
     selected_user_id = user_map[selected_user_label]
 
-    st.warning("this will permanantly delete the user")
+    st.warning("This will permanently delete the user.")
 
     if st.button("Remove User"):
-        cursor.execute("DELETE FROM users WHERE id = %s", (selected_user_id,))
-        conn.commit()
+        supabase.table("users").delete().eq("id", selected_user_id).execute()
         st.success("User removed successfully!")
         st.rerun()
 
 
-def admin_dashboard(cursor, conn):
+def admin_dashboard(supabase):
     if st.session_state.get("role") != "admin":
         st.error("Access denied")
         st.stop()
 
-    st.title("🎓 Admin Dashboard")
+    st.title("Admin Dashboard")
     st.write("Manage announcements and community moderation here.")
 
     tab1, tab2 = st.tabs(["Post Announcement", "Remove User"])
 
     with tab1:
-        admin_post_announcement(cursor, conn)
+        admin_post_announcement(supabase)
 
     with tab2:
-        admin_remove_user(cursor, conn)
+        admin_remove_user(supabase)

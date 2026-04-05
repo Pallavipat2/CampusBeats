@@ -1,11 +1,12 @@
-import streamlit as st
-import db 
 import os
+
 import pandas as pd
+import streamlit as st
 import streamlit.components.v1 as components
 
-#=====================================================
-# ================= GENRE MAP =================
+from db import first_row, result_data
+
+
 GENRE_MAP = {
     "Pop": ["pop", "k-pop"],
     "Rock": ["rock", "metal", "punk"],
@@ -18,7 +19,7 @@ GENRE_MAP = {
     "Indian": ["bollywood", "desi", "tollywood", "kollywood"],
 }
 
-# ================= GENRE CLASSIFIER =================
+
 def classify_genre(genres):
     if not genres:
         return "Unknown"
@@ -33,204 +34,193 @@ def classify_genre(genres):
     return genres[0].title()
 
 
-
-
-# =====================================================
-# ==================== MOOD LOGGER =====================
-# =====================================================
-def show_mood_logger(cursor, conn, sp):
-
-    st.title("🎵 Mood Music Journal")
+def show_mood_logger(supabase, sp):
+    st.title("Music Mood Journal")
 
     query = st.text_input("Search for a song")
 
     if st.button("Search"):
         if query:
             results = sp.search(q=query, type="track", limit=5)
-            st.session_state["tracks"] = results['tracks']['items']
+            st.session_state["tracks"] = results["tracks"]["items"]
 
     tracks = st.session_state.get("tracks", [])
 
-    if tracks:
+    if not tracks:
+        return
 
-        song_options = [
-            f"{track['name']} - {track['artists'][0]['name']}"
-            for track in tracks
-        ]
+    song_options = [
+        f"{track['name']} - {track['artists'][0]['name']}"
+        for track in tracks
+    ]
 
-        selected_song = st.selectbox("Select a song", song_options)
-        selected_index = song_options.index(selected_song)
-        track = tracks[selected_index]
+    selected_song = st.selectbox("Select a song", song_options)
+    selected_index = song_options.index(selected_song)
+    track = tracks[selected_index]
 
-        spotify_track_id = track['id']
-        song_name = track['name']
-        artist_name = track['artists'][0]['name']
-        album_name = track['album']['name']
-        artist_id = track['artists'][0]['id']
+    spotify_track_id = track["id"]
+    song_name = track["name"]
+    artist_name = track["artists"][0]["name"]
+    album_name = track["album"]["name"]
+    artist_id = track["artists"][0]["id"]
 
-        artist_info = sp.artist(artist_id)
-        genres = artist_info.get('genres', [])
-        genre_category = classify_genre(genres)
+    artist_info = sp.artist(artist_id)
+    genres = artist_info.get("genres", [])
+    genre_category = classify_genre(genres)
 
-        embed_url = f"https://open.spotify.com/embed/track/{spotify_track_id}"
+    embed_url = f"https://open.spotify.com/embed/track/{spotify_track_id}"
 
-        st.write("Selected:", song_name, "-", artist_name)
-        st.write("Album:", album_name)
+    st.write("Selected:", song_name, "-", artist_name)
+    st.write("Album:", album_name)
 
-        components.iframe(embed_url, height=80)
+    components.iframe(embed_url, height=80)
 
-        if track['album']['images']:
-            st.image(track['album']['images'][0]['url'], width=200)
+    if track["album"]["images"]:
+        st.image(track["album"]["images"][0]["url"], width=200)
 
-        mood = st.selectbox(
-            "Choose your mood",
-            [
-                "Happy","Sad","Stressed","Excited","Overthinking","Content",
-                "Calm","Hopeful","Proud","Grateful","Inspired","Lonely",
-                "Tired","Disappointed","Anxious","Overwhelmed","Motivated",
-                "Hopeless","Enraged","Lost","Nostalgic"
-            ]
+    mood = st.selectbox(
+        "Choose your mood",
+        [
+            "Happy", "Sad", "Stressed", "Excited", "Overthinking", "Content",
+            "Calm", "Hopeful", "Proud", "Grateful", "Inspired", "Lonely",
+            "Tired", "Disappointed", "Anxious", "Overwhelmed", "Motivated",
+            "Hopeless", "Enraged", "Lost", "Nostalgic",
+        ],
+    )
+
+    journal = st.text_area("Journal")
+    visibility = st.selectbox(
+        "Who can see this post?",
+        ["private", "followers", "public"],
+    )
+
+    if st.button("Post Entry"):
+        user_id = st.session_state["user_id"]
+        song_row = first_row(
+            supabase.table("songs")
+            .select("id")
+            .eq("spotify_track_id", spotify_track_id)
+            .limit(1)
+            .execute()
         )
 
-        journal = st.text_area("Journal")
+        if song_row is None:
+            try:
+                supabase.table("songs").upsert(
+                    {
+                        "spotify_track_id": spotify_track_id,
+                        "song_name": song_name,
+                        "artist_name": artist_name,
+                        "album_name": album_name,
+                        "genre": genre_category,
+                    },
+                    on_conflict="spotify_track_id",
+                ).execute()
+            except Exception as error:
+                if 'row-level security policy for table "songs"' in str(error):
+                    st.error(
+                        "Supabase is blocking writes to `public.songs`. "
+                        "Please re-run the `songs` RLS section in "
+                        "`supabase_public_users_migration.sql`, then try posting again."
+                    )
+                    return
+                raise
 
-        visibility = st.selectbox(
-            "Who can see this post?",
-            ["private", "followers", "public"]
-        )
+            song_row = first_row(
+                supabase.table("songs")
+                .select("id")
+                .eq("spotify_track_id", spotify_track_id)
+                .limit(1)
+                .execute()
+            )
 
-        if st.button("Post Entry"):
+        if song_row is None:
+            st.error("Song could not be saved.")
+            return
 
-            user_id = st.session_state["user_id"]
+        supabase.table("posts").insert(
+            {
+                "user_id": user_id,
+                "song_id": song_row["id"],
+                "mood": mood,
+                "journal_text": journal,
+                "visibility": visibility,
+            }
+        ).execute()
 
-            # Insert song if not already stored
-            cursor.execute("""
-                INSERT IGNORE INTO songs
-                (spotify_track_id, song_name, artist_name, album_name, genre)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                spotify_track_id,
-                song_name,
-                artist_name,
-                album_name,
-                genre_category
-            ))
-            conn.commit()
+        st.success("Post created successfully!")
 
-            # Retrieve song ID
-            cursor.execute("""
-                SELECT id FROM songs
-                WHERE spotify_track_id=%s
-            """, (spotify_track_id,))
 
-            result = cursor.fetchone()
-
-            if result is None:
-                st.error("Song could not be saved.")
-                st.stop()
-
-            song_id = result["id"]
-
-            # Insert post
-            cursor.execute("""
-                INSERT INTO posts
-                (user_id, song_id, mood, journal_text, visibility)
-                VALUES (%s, %s, %s, %s, %s)
-            """, (
-                user_id,
-                song_id,
-                mood,
-                journal,
-                visibility
-            ))
-
-            conn.commit()
-
-            st.success("Post created successfully!")
-
-# =====================================================
-# ===================== Profile======================
-# =====================================================
-def show_profile_page(cursor, conn):
-
-    st.title("👤 My Profile")
+def show_profile_page(supabase):
+    st.title("My Profile")
 
     user_id = st.session_state["user_id"]
     current_role = st.session_state.get("role", "student")
 
-    cursor.execute("SELECT * FROM users WHERE id=%s",(user_id,))
-    user = cursor.fetchone()
+    user = first_row(
+        supabase.table("users").select("*").eq("id", user_id).limit(1).execute()
+    )
 
-    col1, col2 = st.columns([1,3])
+    if not user:
+        st.error("Could not load your profile.")
+        return
 
-    # PROFILE PIC
+    col1, col2 = st.columns([1, 3])
+
     with col1:
-        if user["profile_pic"]:
+        if user.get("profile_pic"):
             st.image(user["profile_pic"], width=150)
         else:
-            st.image(
-                "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-                width=150
-            )
+            st.image("https://cdn-icons-png.flaticon.com/512/149/149071.png", width=150)
 
-        uploaded_file = st.file_uploader("Upload profile picture", type=["png","jpg","jpeg"])
+        uploaded_file = st.file_uploader("Upload profile picture", type=["png", "jpg", "jpeg"])
 
-    # PROFILE INFO
     with col2:
-
         st.subheader(user["username"])
 
-        bio = st.text_area(
-            "Bio",
-            value=user["bio"] if user["bio"] else ""
-        )
-
-        campus_group = user["campus_group"] if user["campus_group"] else ""
-        year = user["year_of_study"] if user["year_of_study"] else ""
+        bio = st.text_area("Bio", value=user.get("bio") or "")
+        campus_group = user.get("campus_group") or ""
+        year = user.get("year_of_study") or ""
 
         if current_role != "admin":
-            campus_group = st.text_input(
-                "Campus Group / Department",
-                value=campus_group
-            )
+            campus_group = st.text_input("Campus Group / Department", value=campus_group)
 
-            year_options = ["1st Year","2nd Year","3rd Year","4th Year","Postgrad"]
+            year_options = ["1st Year", "2nd Year", "3rd Year", "4th Year", "Postgrad"]
             year_index = year_options.index(year) if year in year_options else 0
-            year = st.selectbox(
-                "Year of Study",
-                year_options,
-                index=year_index,
-            )
+            year = st.selectbox("Year of Study", year_options, index=year_index)
 
     if st.button("Save Profile"):
-
-        profile_path = user["profile_pic"]
+        profile_path = user.get("profile_pic")
 
         if uploaded_file:
-
             os.makedirs("profile_pics", exist_ok=True)
-
             file_path = f"profile_pics/{user_id}_{uploaded_file.name}"
-
             with open(file_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
-
             profile_path = file_path
 
-        if current_role == "admin":
-            cursor.execute("""
-            UPDATE users
-            SET bio=%s, profile_pic=%s
-            WHERE id=%s
-            """,(bio, profile_path, user_id))
-        else:
-            cursor.execute("""
-            UPDATE users
-            SET bio=%s, campus_group=%s, year_of_study=%s, profile_pic=%s
-            WHERE id=%s
-            """,(bio, campus_group, year, profile_path, user_id))
+        payload = {"bio": bio, "profile_pic": profile_path}
+        if current_role != "admin":
+            payload["campus_group"] = campus_group
+            payload["year_of_study"] = year
 
-        conn.commit()
+        try:
+            supabase.table("users").update(payload).eq("id", user_id).execute()
+        except Exception as error:
+            if "column users." in str(error):
+                st.error(
+                    "Your `public.users` table is missing one or more profile columns. "
+                    "Please re-run `supabase_public_users_migration.sql`, then try again."
+                )
+                return
+            if 'row-level security policy for table "users"' in str(error):
+                st.error(
+                    "Supabase is blocking profile updates on `public.users`. "
+                    "Please re-run the users RLS section in `supabase_public_users_migration.sql`."
+                )
+                return
+            st.error(f"Profile update failed: {error}")
+            return
 
         st.success("Profile updated!")
         st.rerun()
@@ -239,25 +229,41 @@ def show_profile_page(cursor, conn):
         return
 
     st.divider()
-
     st.subheader("Mood Dashboard")
     st.caption("A quick look at your mood patterns, favorite genres, and posting trends over time.")
 
-    cursor.execute("""
-        SELECT
-            p.mood,
-            COALESCE(s.genre, 'No genre') AS genre,
-            DATE(p.created_at) AS entry_date
-        FROM posts p
-        LEFT JOIN songs s ON p.song_id = s.id
-        WHERE p.user_id = %s
-        ORDER BY p.created_at ASC
-    """, (user_id,))
-    entries = cursor.fetchall()
+    posts = result_data(
+        supabase.table("posts")
+        .select("mood, created_at, song_id")
+        .eq("user_id", user_id)
+        .order("created_at")
+        .execute()
+    )
 
-    if not entries:
+    if not posts:
         st.info("Create a few mood posts to unlock your dashboard insights.")
         return
+
+    song_ids = sorted({post["song_id"] for post in posts if post.get("song_id") is not None})
+    songs_by_id = {}
+    if song_ids:
+        songs = result_data(
+            supabase.table("songs").select("id, genre").in_("id", song_ids).execute()
+        )
+        songs_by_id = {song["id"]: song for song in songs}
+
+    entries = []
+    for post in posts:
+        created_at = post.get("created_at")
+        entry_date = created_at[:10] if isinstance(created_at, str) else created_at
+        song = songs_by_id.get(post.get("song_id"))
+        entries.append(
+            {
+                "mood": post.get("mood"),
+                "genre": (song or {}).get("genre") or "No genre",
+                "entry_date": entry_date,
+            }
+        )
 
     dashboard_df = pd.DataFrame(entries)
     dashboard_df["entry_date"] = pd.to_datetime(dashboard_df["entry_date"])
@@ -318,6 +324,3 @@ def show_profile_page(cursor, conn):
     if not mood_trends.empty:
         st.markdown("**Mood Trends Over Time**")
         st.area_chart(mood_trends)
-    
-    
-    

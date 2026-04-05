@@ -1,16 +1,68 @@
 import os
 import streamlit as st
+import streamlit.components.v1 as components
+from Auth import (
+    forgot_password_page,
+    init_auth_session,
+    login_page,
+    maybe_route_password_reset,
+    logout,
+    reset_password_page,
+    restore_supabase_session,
+    signup_page,
+    sync_auth_redirect_from_url,
+)
 import spotipy
 from spotipy.oauth2 import SpotifyClientCredentials
 
-from Auth import init_auth_session, login_page, signup_page, forgot_password_page, logout
-from db import get_connection
+st.set_page_config(page_title="Campus Beats", layout="wide")
+
+components.html(
+    """
+    <script>
+    const parentUrl = new URL(window.parent.location.href);
+    const hash = parentUrl.hash ? parentUrl.hash.substring(1) : "";
+    if (
+      hash &&
+      (
+        hash.includes("type=recovery") ||
+        hash.includes("access_token=") ||
+        hash.includes("refresh_token=") ||
+        hash.includes("token_hash=") ||
+        hash.includes("code=")
+      )
+    ) {
+      const params = new URLSearchParams(hash);
+      const url = new URL(window.parent.location.href);
+      for (const [key, value] of params.entries()) {
+        url.searchParams.set(key, value);
+      }
+      url.hash = "";
+      window.parent.location.replace(url.toString());
+    }
+    </script>
+    """,
+    height=0,
+)
+
+params = st.query_params
+
+if (
+    params.get("type") == "recovery"
+    or (params.get("access_token") and params.get("refresh_token"))
+    or params.get("token_hash")
+    or params.get("code")
+):
+    from Auth import reset_password_page
+    reset_password_page(None)
+    st.stop()
+
+
+from db import get_supabase_client
 from mood import show_mood_logger, show_profile_page
 import social
 from admin import admin_dashboard
 from streamlit_cookies_manager import EncryptedCookieManager
-
-st.set_page_config(page_title="Campus Beats", layout="wide")
 
 # ================= COOKIES =================
 cookies = EncryptedCookieManager(
@@ -22,12 +74,11 @@ if not cookies.ready():
     st.stop()
 
 # ================= DATABASE =================
-conn = get_connection()
-if conn is None:
-    st.error("Database connection failed.")
+try:
+    supabase = get_supabase_client()
+except Exception as e:
+    st.error(f"Supabase connection failed: {e}")
     st.stop()
-
-cursor = conn.cursor(dictionary=True)
 
 # ================= CSS =================
 st.markdown("""
@@ -280,6 +331,8 @@ img {
 
 # ================= SESSION =================
 init_auth_session()
+sync_auth_redirect_from_url()
+maybe_route_password_reset()
 
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
@@ -295,42 +348,9 @@ if "current_menu" not in st.session_state:
 
 # ================= RESTORE LOGIN =================
 if not st.session_state["logged_in"]:
-    user_id = cookies.get("user_id")
-
-    if user_id:
-        try:
-            user_id = int(user_id)
-        except (TypeError, ValueError):
-            cookies["user_id"] = ""
-            cookies["username"] = ""
-            cookies["role"] = ""
-            cookies["current_menu"] = ""
-            cookies.save()
-            user_id = None
-
-        if user_id is not None:
-            try:
-                cursor.execute(
-                    "SELECT id, username, role FROM users WHERE id=%s",
-                    (user_id,)
-                )
-                user = cursor.fetchone()
-
-                if user:
-                    st.session_state["logged_in"] = True
-                    st.session_state["user_id"] = user["id"]
-                    st.session_state["username"] = user["username"]
-                    st.session_state["role"] = user["role"]
-                    st.session_state["page"] = "app"
-                    st.session_state["current_menu"] = cookies.get("current_menu")
-                else:
-                    cookies["user_id"] = ""
-                    cookies["username"] = ""
-                    cookies["role"] = ""
-                    cookies["current_menu"] = ""
-                    cookies.save()
-            except Exception as e:
-                st.warning(f"Could not restore login session right now: {e}")
+    restored = restore_supabase_session(cookies)
+    if restored:
+        st.session_state["current_menu"] = cookies.get("current_menu")
 
 # ================= SPOTIFY =================
 CLIENTID = os.getenv("CLIENTID")
@@ -457,7 +477,7 @@ if not st.session_state["logged_in"]:
             st.rerun()
 
     elif st.session_state["page"] == "signup":
-        signup_page()
+        signup_page(cookies)
 
         if st.button("⬅ Back"):
             st.session_state["page"] = "landing"
@@ -470,51 +490,73 @@ if not st.session_state["logged_in"]:
             st.session_state["page"] = "landing"
             st.rerun()
 
+    elif st.session_state["page"] == "reset_password":
+        reset_password_page(cookies)
+
+        if st.button("Back", key="reset_password_back"):
+            st.session_state["page"] = "login"
+            st.rerun()
+
 # ---------- LOGGED IN ----------
 else:
     role = st.session_state.get("role")
 
     if role == "admin":
-        menu_options = ["Admin Dashboard", "Profile", "Feed", "Discover People", "Logout"]
+        menu_options = ["Admin Dashboard", "Profile", "Feed", "Discover People"]
     else:
-        menu_options = ["Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People", "Logout"]
+        menu_options = ["Mood Logger", "My Mood Posts", "Profile", "Feed", "Discover People"]
 
     saved_menu = st.session_state.get("current_menu") or cookies.get("current_menu")
     if saved_menu not in menu_options:
         saved_menu = menu_options[0]
 
+    if st.session_state.get("current_menu") not in menu_options:
+        st.session_state["current_menu"] = saved_menu
+
     if role == "admin":
         menu = st.sidebar.selectbox(
             "Menu",
             menu_options,
-            index=menu_options.index(saved_menu)
+            index=menu_options.index(st.session_state["current_menu"]),
+            key="current_menu",
         )
         st.sidebar.success(f"Admin: {st.session_state['username']}")
     else:
         menu = st.sidebar.selectbox(
             "Menu",
             menu_options,
-            index=menu_options.index(saved_menu)
+            index=menu_options.index(st.session_state["current_menu"]),
+            key="current_menu",
         )
         st.sidebar.success(st.session_state["username"])
 
-    if menu != st.session_state.get("current_menu"):
-        st.session_state["current_menu"] = menu
+    if menu != cookies.get("current_menu"):
         cookies["current_menu"] = menu
         cookies.save()
 
+    top_spacer, top_logout = st.columns([6, 1])
+    with top_spacer:
+        st.empty()
+    with top_logout:
+        if st.button("Logout", use_container_width=True, key="top_logout_button"):
+            logout(cookies)
+            st.session_state["page"] = "landing"
+            st.session_state["tracks"] = []
+            st.success("Logged out successfully!")
+            st.rerun()
+
     # ---------- PAGES ----------
     if menu == "Admin Dashboard":
-        admin_dashboard(cursor, conn)
+        admin_dashboard(supabase)
 
     elif menu == "Mood Logger":
-        show_mood_logger(cursor, conn, sp)
+        show_mood_logger(supabase, sp)
 
     elif menu == "My Mood Posts":
-        social.show_my_mood_posts(cursor, conn, st.session_state["user_id"])
+        social.show_my_mood_posts(supabase, st.session_state["user_id"])
 
     elif menu == "Profile":
-        show_profile_page(cursor, conn)
+        show_profile_page(supabase)
 
     elif menu == "Feed":
         current_user = st.session_state["user_id"]
@@ -522,23 +564,9 @@ else:
         st.title("Campus Beats Feed")
 
         with st.expander("Upload a music video"):
-            social.show_video_upload(cursor, conn, current_user)
+            social.show_video_upload(supabase, current_user)
 
-        social.show_feed(cursor, conn, current_user)
+        social.show_feed(supabase, current_user)
 
     elif menu == "Discover People":
-        social.discover_users(cursor, conn)
-
-    elif menu == "Logout":
-        logout(cookies)
-        st.session_state["page"] = "landing"
-        st.session_state["tracks"] = []
-        st.session_state["current_menu"] = None
-        cookies["current_menu"] = ""
-        cookies.save()
-        st.success("Logged out successfully!")
-        st.rerun()
-
-# ================= CLOSE =================
-cursor.close()
-conn.close()
+        social.discover_users(supabase)
