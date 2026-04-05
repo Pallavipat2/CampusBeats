@@ -1,11 +1,8 @@
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from db import first_row, result_data
-from spotify_playback import (
-    render_spotify_playback_controls,
-    render_spotify_track_player,
-)
 
 
 GENRE_MAP = {
@@ -123,14 +120,12 @@ def show_mood_logger(supabase, sp, spotify_error=None):
     genres = artist_info.get("genres", [])
     genre_category = classify_genre(genres)
 
+    embed_url = f"https://open.spotify.com/embed/track/{spotify_track_id}"
+
     st.write("Selected:", song_name, "-", artist_name)
     st.write("Album:", album_name)
 
-    render_spotify_track_player(
-        spotify_track_id,
-        key_prefix=f"mood_{spotify_track_id}",
-    )
-    render_spotify_playback_controls()
+    components.iframe(embed_url, height=80)
 
     if track["album"]["images"]:
         st.image(track["album"]["images"][0]["url"], width=200)

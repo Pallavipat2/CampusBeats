@@ -6,13 +6,13 @@ import uuid
 from datetime import datetime
 
 import streamlit as st
+import streamlit.components.v1 as components
 try:
     import httpx
 except ImportError:
     httpx = None
 
 from db import first_row, result_data
-from spotify_playback import render_spotify_track_player
 
 
 DEFAULT_PROFILE_PIC = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
@@ -904,10 +904,9 @@ def show_feed(supabase, current_user):
             st.markdown(card_content, unsafe_allow_html=True)
 
             if spotify_track_id:
-                render_spotify_track_player(
-                    spotify_track_id,
-                    key_prefix=f"feed_{post_id}_{spotify_track_id}",
-                    compact=True,
+                components.iframe(
+                    f"https://open.spotify.com/embed/track/{spotify_track_id}",
+                    height=80,
                 )
 
             if post_text:
@@ -1028,10 +1027,9 @@ def show_my_mood_posts(supabase, current_user):
             st.markdown(f"**Song:** {song['song_name']}")
 
         if song.get("spotify_track_id"):
-            render_spotify_track_player(
-                song["spotify_track_id"],
-                key_prefix=f"mypost_{post['id']}_{song['spotify_track_id']}",
-                compact=True,
+            components.iframe(
+                f"https://open.spotify.com/embed/track/{song['spotify_track_id']}",
+                height=80,
             )
 
         body = post.get("journal_text") or post.get("caption") or "(No text)"
