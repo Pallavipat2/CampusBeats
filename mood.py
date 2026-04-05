@@ -44,6 +44,17 @@ def _profile_pic_public_url(storage_response):
     return None
 
 
+def _profile_pic_display_src(profile_pic):
+    if not profile_pic:
+        return "https://cdn-icons-png.flaticon.com/512/149/149071.png"
+
+    profile_pic = str(profile_pic)
+    if profile_pic.startswith(("http://", "https://", "data:")):
+        return profile_pic
+
+    return "https://cdn-icons-png.flaticon.com/512/149/149071.png"
+
+
 def _upload_profile_picture(supabase, user_id, uploaded_file):
     file_ext = uploaded_file.name.split(".")[-1].lower()
     file_name = f"{user_id}.{file_ext}"
@@ -200,10 +211,7 @@ def show_profile_page(supabase):
     col1, col2 = st.columns([1, 3])
 
     with col1:
-        if user.get("profile_pic"):
-            st.image(user["profile_pic"], width=150)
-        else:
-            st.image("https://cdn-icons-png.flaticon.com/512/149/149071.png", width=150)
+        st.image(_profile_pic_display_src(user.get("profile_pic")), width=150)
 
         uploaded_file = st.file_uploader("Upload profile picture", type=["png", "jpg", "jpeg"])
 
