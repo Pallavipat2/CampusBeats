@@ -77,15 +77,24 @@ def _upload_profile_picture(supabase, user_id, uploaded_file):
     return public_url
 
 
-def show_mood_logger(supabase, sp):
+def show_mood_logger(supabase, sp, spotify_error=None):
     st.title("Music Mood Journal")
+
+    if sp is None:
+        st.error(spotify_error or "Spotify search is unavailable right now.")
+        st.info("Add valid Spotify API credentials to enable song search in Mood Logger.")
+        return
 
     query = st.text_input("Search for a song")
 
     if st.button("Search"):
         if query:
-            results = sp.search(q=query, type="track", limit=5)
-            st.session_state["tracks"] = results["tracks"]["items"]
+            try:
+                results = sp.search(q=query, type="track", limit=5)
+                st.session_state["tracks"] = results["tracks"]["items"]
+            except Exception as error:
+                st.error(f"Spotify search failed: {error}")
+                return
 
     tracks = st.session_state.get("tracks", [])
 

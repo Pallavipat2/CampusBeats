@@ -8,6 +8,41 @@ from db import result_data
 
 ADMIN_IMAGE_FOLDER = "uploads/admin_images"
 ADMIN_VIDEO_FOLDER = "uploads/admin_videos"
+VIDEO_BUCKET = os.getenv("SUPABASE_VIDEO_BUCKET", "post-videos")
+
+
+def _storage_public_url(storage_response):
+    if isinstance(storage_response, str):
+        return storage_response
+    if isinstance(storage_response, dict):
+        return storage_response.get("publicUrl") or storage_response.get("public_url")
+    for attr in ("publicUrl", "public_url"):
+        value = getattr(storage_response, attr, None)
+        if value:
+            return value
+    return None
+
+
+def _upload_video_to_storage(supabase, owner_id, uploaded_video):
+    file_ext = uploaded_video.name.split(".")[-1].lower()
+    file_name = f"{owner_id}/{uuid.uuid4()}.{file_ext}"
+    file_bytes = uploaded_video.getvalue()
+
+    supabase.storage.from_(VIDEO_BUCKET).upload(
+        path=file_name,
+        file=file_bytes,
+        file_options={
+            "content-type": uploaded_video.type or f"video/{file_ext}",
+            "upsert": "false",
+        },
+    )
+
+    public_url = _storage_public_url(
+        supabase.storage.from_(VIDEO_BUCKET).get_public_url(file_name)
+    )
+    if not public_url:
+        raise ValueError("Could not resolve the uploaded video URL.")
+    return public_url
 
 
 def _insert_announcement_post(supabase, payload):
@@ -110,12 +145,11 @@ def admin_post_announcement(supabase):
                 image_file.write(uploaded_image.read())
 
         if uploaded_video:
-            os.makedirs(ADMIN_VIDEO_FOLDER, exist_ok=True)
-            video_ext = uploaded_video.name.split(".")[-1]
-            video_filename = f"{uuid.uuid4()}.{video_ext}"
-            video_path = os.path.join(ADMIN_VIDEO_FOLDER, video_filename)
-            with open(video_path, "wb") as video_file:
-                video_file.write(uploaded_video.read())
+            try:
+                video_path = _upload_video_to_storage(supabase, admin_user_id, uploaded_video)
+            except Exception as error:
+                st.error(f"Video upload failed: {error}")
+                return
 
         payload = {
             "user_id": admin_user_id,

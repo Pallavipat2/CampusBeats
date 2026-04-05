@@ -17,6 +17,7 @@ from db import first_row, result_data
 
 DEFAULT_PROFILE_PIC = "https://cdn-icons-png.flaticon.com/512/149/149071.png"
 UPLOAD_FOLDER = "uploads/videos"
+VIDEO_BUCKET = os.getenv("SUPABASE_VIDEO_BUCKET", "post-videos")
 
 
 def _is_transient_network_error(error):
@@ -38,6 +39,40 @@ def _consume_query_warning():
     warning = st.session_state.pop("_supabase_query_warning", None)
     if warning:
         st.warning(warning)
+
+
+def _storage_public_url(storage_response):
+    if isinstance(storage_response, str):
+        return storage_response
+    if isinstance(storage_response, dict):
+        return storage_response.get("publicUrl") or storage_response.get("public_url")
+    for attr in ("publicUrl", "public_url"):
+        value = getattr(storage_response, attr, None)
+        if value:
+            return value
+    return None
+
+
+def _upload_video_to_storage(supabase, owner_id, uploaded_video):
+    file_ext = uploaded_video.name.split(".")[-1].lower()
+    file_name = f"{owner_id}/{uuid.uuid4()}.{file_ext}"
+    file_bytes = uploaded_video.getvalue()
+
+    supabase.storage.from_(VIDEO_BUCKET).upload(
+        path=file_name,
+        file=file_bytes,
+        file_options={
+            "content-type": uploaded_video.type or f"video/{file_ext}",
+            "upsert": "false",
+        },
+    )
+
+    public_url = _storage_public_url(
+        supabase.storage.from_(VIDEO_BUCKET).get_public_url(file_name)
+    )
+    if not public_url:
+        raise ValueError("Could not resolve the uploaded video URL.")
+    return public_url
 
 
 def _insert_video_post(supabase, payload):
@@ -271,8 +306,6 @@ def _enriched_posts(supabase, posts):
 def show_video_upload(supabase, current_user):
     st.subheader("Upload Music Video")
 
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
     caption = st.text_area("Caption", key="video_caption")
     mood = st.selectbox(
         "Choose your mood",
@@ -295,13 +328,8 @@ def show_video_upload(supabase, current_user):
             st.error("Please upload a video")
             return
 
-        file_ext = uploaded_video.name.split(".")[-1]
-        filename = f"{uuid.uuid4()}.{file_ext}"
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
-
         try:
-            with open(file_path, "wb") as f:
-                f.write(uploaded_video.read())
+            video_url = _upload_video_to_storage(supabase, current_user, uploaded_video)
 
             _insert_video_post(
                 supabase,
@@ -311,7 +339,7 @@ def show_video_upload(supabase, current_user):
                     "mood": mood,
                     "journal_text": caption,
                     "visibility": visibility,
-                    "video_url": file_path,
+                    "video_url": video_url,
                     "caption": caption,
                 },
             )

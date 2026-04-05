@@ -13,6 +13,7 @@ from Auth import (
     sync_auth_redirect_from_url,
 )
 import spotipy
+from spotipy.exceptions import SpotifyOauthError
 from spotipy.oauth2 import SpotifyClientCredentials
 
 st.set_page_config(page_title="Campus Beats", layout="wide")
@@ -353,15 +354,44 @@ if not st.session_state["logged_in"]:
         st.session_state["current_menu"] = cookies.get("current_menu")
 
 # ================= SPOTIFY =================
-CLIENTID = os.getenv("CLIENTID") or st.secrets["SPOTIPY_CLIENT_ID"]
-CLIENTSECRET = os.getenv("CLIENTSECRET") or st.secrets["SPOTIPY_CLIENT_SECRET"]
+def _secret_or_env(*keys):
+    for key in keys:
+        value = os.getenv(key)
+        if value:
+            return value
+    for key in keys:
+        try:
+            value = st.secrets[key]
+        except Exception:
+            value = None
+        if value:
+            return value
+    return None
 
-sp = spotipy.Spotify(
-    auth_manager=SpotifyClientCredentials(
-        client_id=CLIENTID,
-        client_secret=CLIENTSECRET
-    )
-)
+
+def _build_spotify_client():
+    client_id = _secret_or_env("CLIENTID", "SPOTIPY_CLIENT_ID")
+    client_secret = _secret_or_env("CLIENTSECRET", "SPOTIPY_CLIENT_SECRET")
+
+    if not client_id or not client_secret:
+        return None, "Spotify credentials are missing. Add `SPOTIPY_CLIENT_ID` and `SPOTIPY_CLIENT_SECRET` to your app secrets."
+
+    try:
+        spotify_client = spotipy.Spotify(
+            auth_manager=SpotifyClientCredentials(
+                client_id=client_id,
+                client_secret=client_secret
+            )
+        )
+        spotify_client.search(q="test", type="track", limit=1)
+        return spotify_client, None
+    except SpotifyOauthError:
+        return None, "Spotify credentials are invalid or rejected. Check your deployed app secrets."
+    except Exception as error:
+        return None, f"Spotify is unavailable right now: {error}"
+
+
+sp, spotify_error = _build_spotify_client()
 
 # ================= LANDING PAGE =================
 def show_landing_page():
@@ -550,7 +580,7 @@ else:
         admin_dashboard(supabase)
 
     elif menu == "Mood Logger":
-        show_mood_logger(supabase, sp)
+        show_mood_logger(supabase, sp, spotify_error)
 
     elif menu == "My Mood Posts":
         social.show_my_mood_posts(supabase, st.session_state["user_id"])
