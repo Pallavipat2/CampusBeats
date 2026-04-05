@@ -353,8 +353,8 @@ if not st.session_state["logged_in"]:
         st.session_state["current_menu"] = cookies.get("current_menu")
 
 # ================= SPOTIFY =================
-CLIENTID = os.getenv("CLIENTID")
-CLIENTSECRET = os.getenv("CLIENTSECRET")
+CLIENTID = os.getenv("CLIENTID") or st.secrets["SPOTIPY_CLIENT_ID"]
+CLIENTSECRET = os.getenv("CLIENTSECRET") or st.secrets["SPOTIPY_CLIENT_SECRET"]
 
 sp = spotipy.Spotify(
     auth_manager=SpotifyClientCredentials(
