@@ -1,5 +1,3 @@
-import os
-
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -32,6 +30,40 @@ def classify_genre(genres):
                 return category
 
     return genres[0].title()
+
+
+def _profile_pic_public_url(storage_response):
+    if isinstance(storage_response, str):
+        return storage_response
+    if isinstance(storage_response, dict):
+        return storage_response.get("publicUrl") or storage_response.get("public_url")
+    for attr in ("publicUrl", "public_url"):
+        value = getattr(storage_response, attr, None)
+        if value:
+            return value
+    return None
+
+
+def _upload_profile_picture(supabase, user_id, uploaded_file):
+    file_ext = uploaded_file.name.split(".")[-1].lower()
+    file_name = f"{user_id}.{file_ext}"
+    file_bytes = uploaded_file.getvalue()
+
+    supabase.storage.from_("profile-pics").upload(
+        path=file_name,
+        file=file_bytes,
+        file_options={
+            "content-type": uploaded_file.type or f"image/{file_ext}",
+            "upsert": "true",
+        },
+    )
+
+    public_url = _profile_pic_public_url(
+        supabase.storage.from_("profile-pics").get_public_url(file_name)
+    )
+    if not public_url:
+        raise ValueError("Could not resolve the uploaded profile picture URL.")
+    return public_url
 
 
 def show_mood_logger(supabase, sp):
@@ -193,11 +225,11 @@ def show_profile_page(supabase):
         profile_path = user.get("profile_pic")
 
         if uploaded_file:
-            os.makedirs("profile_pics", exist_ok=True)
-            file_path = f"profile_pics/{user_id}_{uploaded_file.name}"
-            with open(file_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            profile_path = file_path
+            try:
+                profile_path = _upload_profile_picture(supabase, user_id, uploaded_file)
+            except Exception as error:
+                st.error(f"Profile picture upload failed: {error}")
+                return
 
         payload = {"bio": bio, "profile_pic": profile_path}
         if current_role != "admin":
