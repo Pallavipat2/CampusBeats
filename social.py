@@ -4,6 +4,7 @@ import mimetypes
 import os
 import uuid
 from datetime import datetime
+from urllib.parse import urlparse
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -50,6 +51,73 @@ def _storage_public_url(storage_response):
         value = getattr(storage_response, attr, None)
         if value:
             return value
+    return None
+
+
+def _storage_signed_url(storage_response):
+    if isinstance(storage_response, str):
+        return storage_response
+    if isinstance(storage_response, dict):
+        return (
+            storage_response.get("signedURL")
+            or storage_response.get("signedUrl")
+            or storage_response.get("signed_url")
+        )
+    for attr in ("signedURL", "signedUrl", "signed_url"):
+        value = getattr(storage_response, attr, None)
+        if value:
+            return value
+    return None
+
+
+def _extract_storage_object_path(video_value):
+    if not video_value:
+        return None
+
+    video_value = str(video_value).strip()
+    if not video_value:
+        return None
+
+    parsed = urlparse(video_value)
+    if parsed.scheme in ("http", "https"):
+        path_parts = [part for part in parsed.path.split("/") if part]
+        public_prefix = ["storage", "v1", "object", "public", VIDEO_BUCKET]
+        sign_prefix = ["storage", "v1", "object", "sign", VIDEO_BUCKET]
+        if path_parts[: len(public_prefix)] == public_prefix:
+            return "/".join(path_parts[len(public_prefix):])
+        if path_parts[: len(sign_prefix)] == sign_prefix:
+            return "/".join(path_parts[len(sign_prefix):])
+        return None
+
+    normalized = video_value.replace("\\", "/").lstrip("/")
+    if normalized.startswith(f"{VIDEO_BUCKET}/"):
+        return normalized[len(VIDEO_BUCKET) + 1:]
+    return normalized
+
+
+def _resolve_supabase_video_url(supabase, video_value):
+    object_path = _extract_storage_object_path(video_value)
+    if not object_path or supabase is None:
+        return None
+
+    try:
+        signed_url = _storage_signed_url(
+            supabase.storage.from_(VIDEO_BUCKET).create_signed_url(object_path, 3600)
+        )
+        if signed_url:
+            return signed_url
+    except Exception:
+        pass
+
+    try:
+        public_url = _storage_public_url(
+            supabase.storage.from_(VIDEO_BUCKET).get_public_url(object_path)
+        )
+        if public_url:
+            return public_url
+    except Exception:
+        pass
+
     return None
 
 
@@ -218,14 +286,15 @@ def get_image_src(image_path):
     return DEFAULT_PROFILE_PIC
 
 
-def get_video_src(video_path):
+def get_video_src(supabase, video_path):
     if not video_path:
         return None
 
     video_path = str(video_path)
 
     if video_path.startswith(("http://", "https://", "data:")):
-        return {"kind": "url", "value": video_path}
+        resolved_url = _resolve_supabase_video_url(supabase, video_path)
+        return {"kind": "url", "value": resolved_url or video_path}
 
     if os.path.exists(video_path):
         return {"kind": "file", "value": video_path}
@@ -237,6 +306,10 @@ def get_video_src(video_path):
     workspace_relative = os.path.normpath(os.path.join(os.getcwd(), video_path))
     if os.path.exists(workspace_relative):
         return {"kind": "file", "value": workspace_relative}
+
+    resolved_url = _resolve_supabase_video_url(supabase, video_path)
+    if resolved_url:
+        return {"kind": "url", "value": resolved_url}
 
     return None
 
@@ -351,11 +424,13 @@ def show_video_upload(supabase, current_user):
 
 
 def can_view_post(post, current_user, following_ids):
+    visibility = str(post.get("visibility") or "").strip().lower()
+
     if post["user_id"] == current_user:
         return True
-    if post.get("visibility") == "public":
+    if visibility == "public":
         return True
-    if post.get("visibility") == "followers" and post["user_id"] in following_ids:
+    if visibility == "followers" and post["user_id"] in following_ids:
         return True
     return False
 
@@ -869,7 +944,7 @@ def show_feed(supabase, current_user):
         post_text = post.get("caption") or post.get("journal_text") or ""
         profile_pic = get_image_src(post.get("profile_pic") or DEFAULT_PROFILE_PIC)
         image_path = post.get("image_path") or post.get("image_url")
-        video_path = get_video_src(post.get("video_path") or post.get("video_url"))
+        video_path = get_video_src(supabase, post.get("video_path") or post.get("video_url"))
         attachment_link = post.get("attachment_link")
         has_other_attachments = bool(image_path or attachment_link)
 
@@ -993,16 +1068,20 @@ def show_my_mood_posts(supabase, current_user):
     selected = st.session_state["my_posts_filter"]
     selected_visibility = filter_map[selected]
 
-    query = (
+    posts = result_data(
         supabase.table("posts")
         .select("*")
         .eq("user_id", current_user)
         .order("created_at", desc=True)
+        .execute()
     )
-    if selected_visibility and selected_visibility != "uploads":
-        query = query.eq("visibility", selected_visibility)
 
-    posts = result_data(query.execute())
+    if selected_visibility and selected_visibility != "uploads":
+        posts = [
+            post for post in posts
+            if str(post.get("visibility") or "").strip().lower() == selected_visibility
+        ]
+
     if selected_visibility == "uploads":
         posts = [
             post for post in posts
@@ -1035,7 +1114,7 @@ def show_my_mood_posts(supabase, current_user):
         body = post.get("journal_text") or post.get("caption") or "(No text)"
         st.write(body)
 
-        video_path = get_video_src(post.get("video_path") or post.get("video_url"))
+        video_path = get_video_src(supabase, post.get("video_path") or post.get("video_url"))
         if video_path:
             left_col, center_col, right_col = st.columns([1.2, 1.6, 1.2])
             with center_col:
