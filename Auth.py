@@ -9,7 +9,10 @@ from db import first_row, get_supabase_client
 
 load_dotenv()
 
-SUPABASE_PASSWORD_RESET_REDIRECT = os.getenv("SUPABASE_PASSWORD_RESET_REDIRECT")
+SUPABASE_AUTH_REDIRECT_URL = (
+    os.getenv("SUPABASE_AUTH_REDIRECT_URL")
+    or os.getenv("SUPABASE_PASSWORD_RESET_REDIRECT")
+)
 OFFICIAL_ADMIN_USERNAME = "CampusBeatsOfficial"
 
 
@@ -134,14 +137,14 @@ def _resend_signup_confirmation(supabase, email):
         "type": "signup",
         "email": email,
     }
-    if SUPABASE_PASSWORD_RESET_REDIRECT:
-        payload["options"] = {"email_redirect_to": SUPABASE_PASSWORD_RESET_REDIRECT}
+    if SUPABASE_AUTH_REDIRECT_URL:
+        payload["options"] = {"email_redirect_to": SUPABASE_AUTH_REDIRECT_URL}
     supabase.auth.resend(payload)
 
 
 def _signup_redirect_options():
-    if SUPABASE_PASSWORD_RESET_REDIRECT:
-        return {"email_redirect_to": SUPABASE_PASSWORD_RESET_REDIRECT}
+    if SUPABASE_AUTH_REDIRECT_URL:
+        return {"email_redirect_to": SUPABASE_AUTH_REDIRECT_URL}
     return None
 
 
@@ -311,6 +314,11 @@ def restore_supabase_session(cookies):
 
 def signup_page(cookies):
     st.title("Create Account")
+    st.caption(
+        "Confirmation emails are sent by Supabase Auth. "
+        "If no email arrives, check your Supabase Email provider, Confirm email setting, "
+        "and allowed redirect URLs."
+    )
 
     username = st.text_input("Username", key="signup_username_input")
     email = st.text_input("Email", key="signup_email_input")
@@ -471,10 +479,10 @@ def forgot_password_page():
 
         try:
             supabase = get_supabase_client()
-            if SUPABASE_PASSWORD_RESET_REDIRECT:
+            if SUPABASE_AUTH_REDIRECT_URL:
                 supabase.auth.reset_password_for_email(
                     email,
-                    {"redirect_to": SUPABASE_PASSWORD_RESET_REDIRECT},
+                    {"redirect_to": SUPABASE_AUTH_REDIRECT_URL},
                 )
             else:
                 supabase.auth.reset_password_for_email(email)
